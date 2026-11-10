@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tick-core",
+    "crates/merkle",
+    "games/arena",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/sirius-labs-dev/noref"
