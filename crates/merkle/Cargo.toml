@@ -7,6 +7,4 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-# sha256 syscall on-chain, software sha256 off-chain, same call either way.
-# The sha2 feature is the off-chain fallback; the syscall wins on target solana.
-solana-sha256-hasher = { version = "3.1", features = ["sha2"] }
+sha2 = { version = "0.10", default-features = false }

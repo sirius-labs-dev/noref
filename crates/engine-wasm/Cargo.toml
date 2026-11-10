@@ -1,0 +1,15 @@
+[package]
+name = "noref-engine-wasm"
+description = "The NoRef rules compiled for the browser and the Node server: plain C ABI over static buffers, no bindgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+noref-rules = { path = "../rules" }
+arena = { path = "../../games/arena" }
+tick-core = { path = "../tick-core" }

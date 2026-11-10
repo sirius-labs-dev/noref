@@ -4,6 +4,9 @@ members = [
     "crates/tick-core",
     "crates/merkle",
     "games/arena",
+    "crates/rules",
+    "contracts/noref",
+    "crates/engine-wasm",
 ]
 
 [workspace.package]
@@ -11,3 +14,9 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/sirius-labs-dev/noref"
+
+[profile.release]
+panic = "abort"
+overflow-checks = true
+lto = "fat"
+codegen-units = 1

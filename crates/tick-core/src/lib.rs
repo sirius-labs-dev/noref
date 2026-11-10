@@ -1,4 +1,4 @@
-//! Deterministic tick primitives. The same crate compiles to SBF and to
+//! Deterministic tick primitives. The same crate compiles to wasm32 and to
 //! native, so game logic built on it replays bit-identically on-chain.
 //!
 //! Hard rules: no_std, no deps, no floats, no heap. State and inputs are
@@ -30,7 +30,7 @@ pub enum TickError {
     BadInput,
 }
 
-/// Little-endian field access. SBF is little-endian anyway, but spelling it
+/// Little-endian field access. wasm32 is little-endian anyway, but spelling it
 /// out keeps the state layout independent of the host and avoids unsafe.
 pub mod le {
     #[inline]

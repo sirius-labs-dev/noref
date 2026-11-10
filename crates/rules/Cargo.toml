@@ -1,0 +1,13 @@
+[package]
+name = "noref-rules"
+description = "NoRef match rules: input log format, input chain, signed heads, full-match replay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tick-core = { path = "../tick-core" }
+tick-merkle = { path = "../merkle" }
+arena = { path = "../../games/arena" }
+sha2 = { version = "0.10", default-features = false }

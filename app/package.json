@@ -1,0 +1,11 @@
+{
+  "name": "noref-app",
+  "private": true,
+  "type": "module",
+  "description": "NoRef local server, NPC fighters, economy and web client. No dependencies.",
+  "scripts": {
+    "build:engine": "../scripts/build-engine.sh",
+    "start": "node server/main.ts",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
+  }
+}

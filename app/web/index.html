@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NoRef</title>
+<meta name="description" content="No Ref. The game is the referee. A flick-and-park duel with real stakes, where disputes are settled by replaying the whole match on NEAR.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">◎</span>
+    <div>
+      <h1>NoRef</h1>
+      <p class="tag">No Ref. The game is the referee.</p>
+    </div>
+  </div>
+  <div class="chainbadge" id="chainbadge" title="This build settles on a local mirror of contracts/noref. The testnet adapter swaps it for real NEAR transactions.">local chain · mirror of contracts/noref</div>
+  <div class="account" id="account"></div>
+  <button class="ghost small" id="soundbtn" title="Sound on/off">♪ on</button>
+</header>
+
+<main>
+  <section class="login card" id="login" hidden>
+    <h2>Pick a name</h2>
+    <p id="loginhint">You get keys generated in this browser and some test NEAR. No wallet popups: your key signs the match log, the chain checks it.</p>
+    <form id="loginform">
+      <input id="name" placeholder="your-name" pattern="[a-z0-9_\-]{2,20}" required autocomplete="off" spellcheck="false">
+      <button type="submit">Enter</button>
+    </form>
+    <p class="err" id="loginerr"></p>
+  </section>
+
+  <section class="play">
+    <div class="tablewrap card">
+      <div class="hud">
+        <div><span class="dot a"></span> <b id="youname">You</b> <span class="dist" id="distA"></span></div>
+        <div class="round"><div id="round">Pick a fighter to start</div><div class="pips" id="pips"></div></div>
+        <div><span class="dist" id="distB"></span> <b id="npcname">NPC</b> <span class="dot b"></span></div>
+      </div>
+      <canvas id="table" width="640" height="640" aria-label="game table"></canvas>
+      <div class="controls">
+        <div class="status" id="status">Drag back from your orange ball to aim, release to set the flick.</div>
+        <div class="btns">
+          <span class="power" id="power"></span>
+          <button id="flick" disabled>Flick</button>
+          <button id="pass" class="ghost" disabled>Pass</button>
+          <button id="lie" class="warn" hidden title="Claim a win you did not earn and watch the NPC prove you wrong with your own signature">Claim I won anyway</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="card">
+        <div class="cardhead">
+          <h2>Fighters</h2>
+          <label class="liar"><input type="checkbox" id="liar"> NPC lies about the result</label>
+        </div>
+        <ul class="roster" id="roster"></ul>
+      </div>
+
+      <div class="card">
+        <h2>On-chain record</h2>
+        <ol class="record" id="record"><li class="muted">Chain events and your client's checks appear here.</li></ol>
+      </div>
+    </div>
+  </section>
+
+  <section class="economy card">
+    <div class="cardhead">
+      <h2>Economy</h2>
+      <div class="btns">
+        <span class="muted" id="simdays"></span>
+        <button id="ff" class="ghost">Fast-forward a week</button>
+      </div>
+    </div>
+    <p class="muted small">Every fighter is a business: it sets its price from rating and demand, pays a training fee per match, and closes when it goes broke until sponsors invest. Rules live in one file: <code>app/shared/economy.js</code>.</p>
+    <canvas id="chart" width="1200" height="260" aria-label="bankrolls over time"></canvas>
+    <div class="legend" id="legend"></div>
+    <ul class="feed" id="feed"></ul>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>Disputes replay the full match with the same code the NEAR contract runs (crates/rules). <a href="https://github.com/sirius-labs-dev/noref">Source</a></span>
+</footer>
+
+<div class="tip" id="tip" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

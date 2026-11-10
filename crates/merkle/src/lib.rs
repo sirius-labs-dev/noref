@@ -7,7 +7,16 @@
 //! Hashes are domain-separated with a one-byte tag (leaf / node / root)
 //! to rule out second-preimage games between levels.
 
-use solana_sha256_hasher::hashv;
+use sha2::{Digest, Sha256};
+
+/// sha256 over the concatenation of `parts` (same digest as hashing them in one buffer).
+fn hashv(parts: &[&[u8]]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    for p in parts {
+        h.update(p);
+    }
+    h.finalize().into()
+}
 
 pub const CHUNK: usize = 32;
 
@@ -17,15 +26,15 @@ const ROOT_TAG: &[u8] = &[2];
 const INPUT_TAG: &[u8] = &[3];
 
 fn leaf_hash(chunk: &[u8; CHUNK]) -> [u8; 32] {
-    hashv(&[LEAF_TAG, chunk]).to_bytes()
+    hashv(&[LEAF_TAG, chunk])
 }
 
 fn node_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
-    hashv(&[NODE_TAG, left, right]).to_bytes()
+    hashv(&[NODE_TAG, left, right])
 }
 
 fn root_hash(state_len: u64, tree: &[u8; 32]) -> [u8; 32] {
-    hashv(&[ROOT_TAG, &state_len.to_le_bytes(), tree]).to_bytes()
+    hashv(&[ROOT_TAG, &state_len.to_le_bytes(), tree])
 }
 
 /// Number of leaves for a state of `len` bytes: chunk count rounded up
@@ -79,7 +88,7 @@ pub fn state_root(state: &[u8]) -> [u8; 32] {
 /// root alone doesn't pin down which inputs produced it; without this
 /// the asserter could invent inputs at replay time.
 pub fn extend_input_chain(prev: &[u8; 32], inputs: &[u8]) -> [u8; 32] {
-    hashv(&[INPUT_TAG, prev, inputs]).to_bytes()
+    hashv(&[INPUT_TAG, prev, inputs])
 }
 
 /// Inclusion proof for one chunk. `siblings` runs leaf to root.
