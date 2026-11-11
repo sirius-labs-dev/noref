@@ -52,6 +52,13 @@
         <canvas id="table" width="640" height="640" aria-label="game table"></canvas>
         <div class="review" id="review" hidden><span>◉ Chain review</span><small id="reviewsub">the contract is replaying the signed log</small></div>
         <div class="verdict" id="verdict" hidden></div>
+        <div class="claimcard" id="claimcard" hidden>
+          <div class="cc-inner">
+            <div class="cc-face cc-front"><small id="cc-by">Claim</small><b id="cc-claim">–</b><span>signed on-chain</span></div>
+            <div class="cc-face cc-back"><small>Replay says</small><b id="cc-truth">–</b><span id="cc-ticks">replayed on NEAR</span></div>
+          </div>
+        </div>
+        <ul class="checks" id="checks" hidden></ul>
       </div>
       <div class="controls">
         <div class="status" id="status">Drag back from your orange ball to aim, release to set the flick.</div>

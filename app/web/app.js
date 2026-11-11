@@ -268,8 +268,9 @@ function onClientLog(kind, text, data) {
         dur: 1800,
       });
       if (!honest && data.data.by !== me) sfx.alarm();
+      if (!honest) showClaimCard(data.data.by, data.data.winner);
     }
-    if (data.kind === "replay") startReplayVisual(data.data);
+    if (data.kind === "replay") startReplayVisual(data.data, text);
     if (data.kind === "settle") onSettle(data, text);
     return;
   }
@@ -282,6 +283,7 @@ function onSettle(e, text) {
   const delay = replayView ? 2600 : 200;
   setTimeout(() => {
     showVerdict(w, text, e.tx);
+    potFlight(w);
     if (w === SIDE.FIRST) {
       fx.confetti(CENTER, CENTER + 20, [COL.a, "#ffd166", "#ffffff", "#06d6a0"]);
       fx.show(client?.demo ? "The player wins" : "You win", { sub: text, color: "#ffd166", dur: 2600 });
@@ -305,6 +307,89 @@ function clearStage() {
   document.body.classList.remove("reviewing");
   $("review").hidden = true;
   $("verdict").hidden = true;
+  $("claimcard").hidden = true;
+  $("claimcard").classList.remove("flipped");
+  $("checks").hidden = true;
+}
+
+const sideLabel = (w) => (w === SIDE.FIRST ? (client?.demo ? "Player won" : "You won") : w === SIDE.SECOND ? `${client?.info?.npc?.name ?? "NPC"} won` : "Draw");
+
+/** A claim that contradicts our replay: show it as a card, flipped later by the contract. */
+function showClaimCard(by, winner) {
+  const c = $("claimcard");
+  c.classList.remove("flipped");
+  $("cc-by").textContent = by === me ? "You claimed" : `${by === client?.info?.npc?.id ? client.info.npc.name : by} claimed`;
+  $("cc-claim").textContent = `“${sideLabel(winner)}”`;
+  $("cc-truth").textContent = "…";
+  c.hidden = false;
+}
+
+/** The contract's checks, ticked off while the replay plays. */
+let checkTimers = [];
+function startChecks(data, text) {
+  checkTimers.forEach(clearTimeout);
+  const ul = $("checks");
+  const gas = text.match(/\(([\d.]+) Tgas\)/)?.[1];
+  const lines = [
+    ["ok", "input log signed by both, every round"],
+    ["ok", "opponent signature matches the log"],
+    ["wait", `replaying ${client?.D ?? 1080} ticks on NEAR…`, "replay"],
+  ];
+  ul.innerHTML = "";
+  lines.forEach(([cls, t, id], i) => {
+    const li = document.createElement("li");
+    li.className = cls;
+    li.textContent = t;
+    if (id) li.dataset.id = id;
+    ul.append(li);
+    checkTimers.push(setTimeout(() => li.classList.add("on"), 250 + i * 450));
+  });
+  ul.dataset.gas = gas ?? "";
+  ul.hidden = false;
+}
+function finishReview(d) {
+  const ul = $("checks");
+  const r = ul.querySelector('[data-id="replay"]');
+  if (r) {
+    r.className = "ok on";
+    r.textContent = `${client?.D ?? 1080} ticks replayed${ul.dataset.gas ? ` · ${ul.dataset.gas} Tgas` : ""}`;
+  }
+  const li = document.createElement("li");
+  li.className = d.overturned ? "bad" : "ok";
+  li.textContent = d.overturned ? `claim contradicts the replay: ${sideLabel(d.winner).toLowerCase()}` : "the claim matches the replay";
+  ul.append(li);
+  setTimeout(() => li.classList.add("on"), 50);
+  if (!$("claimcard").hidden) {
+    $("cc-truth").textContent = sideLabel(d.winner);
+    $("cc-ticks").textContent = `${client?.D ?? 1080} ticks on NEAR`;
+    setTimeout(() => $("claimcard").classList.add("flipped"), 250);
+  }
+}
+
+/** The pot flies from the scorebug to the winner. */
+function potFlight(w) {
+  if (w !== SIDE.FIRST && w !== SIDE.SECOND) return;
+  const from = $("pot").getBoundingClientRect();
+  const team = document.querySelector(w === SIDE.FIRST ? ".sb-team.a" : ".sb-team.b");
+  const to = team.getBoundingClientRect();
+  for (let i = 0; i < 7; i++) {
+    const c = document.createElement("div");
+    c.className = "coin";
+    c.style.left = `${from.left + from.width / 2}px`;
+    c.style.top = `${from.top + from.height / 2}px`;
+    document.body.append(c);
+    setTimeout(() => {
+      c.style.transform = `translate(${to.left + to.width / 2 - (from.left + from.width / 2) + (Math.random() - 0.5) * 20}px, ${to.top + to.height / 2 - (from.top + from.height / 2)}px) scale(0.7)`;
+      c.style.opacity = "0";
+    }, 30 + i * 70);
+    setTimeout(() => c.remove(), 1400 + i * 70);
+  }
+  setTimeout(() => {
+    team.classList.remove("win");
+    void team.offsetWidth;
+    team.classList.add("win");
+    $("pot").textContent = "0.00 Ⓝ";
+  }, 900);
 }
 function showVerdict(w, text, tx) {
   const reviewed = document.body.classList.contains("reviewing");
@@ -342,7 +427,8 @@ function showVerdict(w, text, tx) {
 }
 
 /** NEAR replays the whole match: show it, fast, with the verdict stamped at the end. */
-function startReplayVisual(data) {
+function startReplayVisual(data, text = "") {
+  startChecks(data, text);
   document.body.classList.add("reviewing");
   $("reviewsub").textContent = "the contract is replaying the signed log";
   $("review").hidden = false;
@@ -463,6 +549,7 @@ function frame(now) {
       if (client) view = client.table;
       fx.show(d.overturned ? "LIE CAUGHT" : "CLAIM CORRECT", { stamp: true, color: d.overturned ? "#ff3b3b" : "#1fd17a", dur: 4000, sub: d.overturned ? "claim overturned by the contract's replay" : "the replay agrees with the claim" });
       $("reviewsub").textContent = d.overturned ? "claim overturned · paying the real winner" : "claim confirmed by the replay";
+      finishReview(d);
       sfx.stamp();
     }
     updateDist(view);
@@ -659,15 +746,36 @@ async function refresh() {
   renderFeed();
 }
 
+let shownBalance = null;
 function renderAccount() {
   const a = $("account");
   if (!state.me) {
     a.innerHTML = "";
+    shownBalance = null;
     return;
   }
+  const from = shownBalance;
+  const to = state.me.balance;
+  shownBalance = to;
   a.innerHTML = testnet()
     ? `<a href="${chainInfo.explorer}/address/${state.me.id}" target="_blank" rel="noopener"><b>${state.me.id}</b></a><span>${fmt(state.me.balance)}</span>`
     : `<b>${state.me.id}</b><span>${fmt(state.me.balance)}</span>`;
+  // a win: count the balance up and show the gain
+  if (from != null && to > from) {
+    const span = a.querySelector("span");
+    const t0 = performance.now();
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / 1000);
+      span.textContent = fmt(Math.round(from + (to - from) * (1 - (1 - p) ** 3)));
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+    const g = document.createElement("span");
+    g.className = "gain";
+    g.textContent = `+${fmt(to - from)}`;
+    a.append(g);
+    setTimeout(() => g.remove(), 4000);
+  }
 }
 
 function renderBadge() {
@@ -928,6 +1036,8 @@ async function playDemo() {
   } finally {
     demoOn = false;
     $("demobtn").disabled = false;
+    if (client?.demo) client.settled = true; // a recording never blocks a real challenge
+    refresh().catch(() => {});
   }
 }
 $("demobtn").addEventListener("click", () => {

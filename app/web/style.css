@@ -122,6 +122,36 @@ body.reviewing canvas#table { filter: saturate(0.7) brightness(0.85); box-shadow
 .verdict a { font: 11.5px var(--mono); color: #8fb4ff; text-decoration: none; border: 1px solid #2a3654; border-radius: 6px; padding: 1px 6px; white-space: nowrap; }
 @keyframes rise { from { transform: translateY(14px); opacity: 0; } }
 
+/* the claim, as a card that flips when the replay disagrees */
+.claimcard { position: absolute; left: 14px; top: 78px; width: 132px; height: 164px; perspective: 900px; animation: rise 0.35s ease-out; pointer-events: none; }
+.cc-inner { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.claimcard.flipped .cc-inner { transform: rotateY(180deg); }
+.cc-face { position: absolute; inset: 0; backface-visibility: hidden; border-radius: 12px; padding: 12px; display: flex; flex-direction: column; justify-content: center; text-align: center; gap: 6px; color: #fff; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55); }
+.cc-face small { font: 700 10px var(--font); letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.85; }
+.cc-face b { font: 900 22px/1.05 var(--disp); text-transform: uppercase; letter-spacing: 0.02em; }
+.cc-face span { font: 500 10px var(--mono); opacity: 0.85; }
+.cc-front { background: linear-gradient(150deg, #3a0f0f, var(--bad)); border: 1px solid var(--bad); }
+.cc-back { background: linear-gradient(150deg, #0c2b1a, var(--ok)); border: 1px solid var(--ok); transform: rotateY(180deg); color: #04130a; }
+.cc-back small, .cc-back span { color: #04130a; }
+
+/* what the contract checks during the review */
+.checks { position: absolute; right: 14px; top: 78px; width: min(250px, 46%); margin: 0; padding: 10px 12px; list-style: none; border-radius: 10px; background: rgba(8, 12, 22, 0.9); border: 1px solid var(--line); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5); font: 11.5px/1.5 var(--mono); color: #c9cfdc; pointer-events: none; animation: rise 0.35s ease-out; }
+.checks li { opacity: 0; transform: translateY(4px); transition: opacity 0.3s, transform 0.3s; }
+.checks li.on { opacity: 1; transform: none; }
+.checks li::before { content: "·"; display: inline-block; width: 16px; color: var(--muted); }
+.checks li.ok::before { content: "✓"; color: var(--ok); }
+.checks li.bad { color: #ffb4a8; }
+.checks li.bad::before { content: "✗"; color: var(--bad); }
+.checks li.wait::before { content: "◌"; color: var(--warn); animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* the pot flying to the winner */
+.coin { position: fixed; z-index: 30; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff3c4, #ffb02e 55%, #a86400); box-shadow: 0 0 12px rgba(255, 176, 46, 0.8); pointer-events: none;
+  transition: transform 0.9s cubic-bezier(0.5, -0.2, 0.3, 1), opacity 0.3s 0.75s; }
+.sb-team.win { animation: pulse 0.9s ease-out 2; }
+@keyframes pulse { 50% { filter: brightness(1.35); box-shadow: inset 0 0 0 2px #fff; } }
+.account .gain { color: var(--ok); font-weight: 700; }
+
 .controls { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
 .status { font-size: 14px; flex: 1 1 260px; color: #c9cfdc; }
 .btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -207,4 +237,7 @@ button.glow:hover:not(:disabled) { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
   .sb-num, .sb-round { padding: 4px 7px; }
   .review span { font-size: 22px; }
   .verdict .txt { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .claimcard { top: 66px; left: 8px; width: 104px; height: 132px; }
+  .cc-face b { font-size: 17px; }
+  .checks { display: none; }
 }
