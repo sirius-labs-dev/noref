@@ -22,3 +22,11 @@ serde_json = "1"
 base64 = "0.22"
 anyhow = "1"
 arena = { path = "../../games/arena" }
+
+# `cargo near build reproducible-wasm` builds inside this exact image, so
+# anyone can rebuild the deployed contract byte for byte and compare hashes.
+[package.metadata.near.reproducible_build]
+image = "sourcescan/cargo-near:0.22.0-rust-1.99.1"
+image_digest = "sha256:c9655eaf7436b90c87ea8b25739f91063032c5c30ba24cfeafe72c142943b5bb"
+passed_env = []
+container_build_command = ["cargo", "near", "build", "non-reproducible-wasm", "--locked"]
