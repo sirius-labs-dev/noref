@@ -253,3 +253,14 @@ button.glow:hover:not(:disabled) { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
   .cc-face b { font-size: 17px; }
   .checks { display: none; }
 }
+
+/* faucet running low / empty, under the name form */
+.faucetnote { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; font-size: 13px; border: 1px solid #5a4210; background: #2a2008; color: #ffd27a; }
+.faucetnote.empty { border-color: #5a1a1a; background: #2a0c0c; color: #ffb0b0; }
+
+/* stakes the player can take back from the contract */
+.card.stuck { border-color: #5a4210; background: linear-gradient(135deg, #2a2008, var(--card) 70%); }
+.card.stuck h2 { color: #ffd27a; margin-bottom: 4px; }
+.stucklist { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.stucklist li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.03); font-size: 14px; }
+.stucklist li button { flex: none; }

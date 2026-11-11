@@ -276,6 +276,34 @@ export class TestnetChain {
     }
   }
 
+  /** Settled/cancelled matches never change again; remember who played them. */
+  private done = new Map<number, string[]>();
+
+  /**
+   * The account's matches among the last `depth` on the contract that still
+   * hold its money: open (nobody joined) or live (not paid out). Raw contract
+   * view, so the browser can decide to cancel, refund or finalize.
+   */
+  async unsettled(account: string, depth = 150) {
+    const count = Number(await this.near.view(this.contract, "match_count"));
+    const ids = [];
+    for (let id = count - 1; id >= Math.max(0, count - depth); id--) {
+      const who = this.done.get(id);
+      if (!who || who.includes(account)) ids.push(id);
+    }
+    const out: any[] = [];
+    for (let i = 0; i < ids.length; i += 10) {
+      const batch = await Promise.all(ids.slice(i, i + 10).map((id) => this.near.view(this.contract, "get_match", { id: String(id) }).then((c: any) => [id, c])));
+      for (const [id, c] of batch) {
+        if (!c) continue;
+        const players = [c.a, c.b].filter(Boolean);
+        if (c.phase === "Settled" || c.phase === "Cancelled") this.done.set(id, players);
+        else if (players.includes(account)) out.push({ id, ...c });
+      }
+    }
+    return out;
+  }
+
   /** Read the match from the contract and emit events for whatever changed. */
   async refresh(id: number, first = false) {
     let c = await this.near.view(this.contract, "get_match", { id: String(id) });

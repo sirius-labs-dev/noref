@@ -243,7 +243,15 @@ Not claimed:
 - The demo dispute window is 15 seconds so matches finish fast; the contract
   accepts 10 seconds to 24 hours.
 - The demo faucet gives each new account 0.8 test NEAR and is rate limited
-  (3 new accounts per network and 15 in total per day).
+  (3 new accounts per network and 15 in total per day). The house account
+  pays for it; when it runs low the page says so, and when it cannot fund one
+  more account it stops making new ones instead of failing halfway
+  (`/api/health` shows its state).
+- A stake is never stuck behind our server. If nobody joins, the creator signs
+  the contract's `cancel`; if a started match is never reported, anyone can
+  sign `refund` ten minutes after it should have ended; a claimed match whose
+  window passed can be paid out with `finalize`. The page lists such matches
+  under "Stakes waiting for you" with the button to sign.
 - The recorded demo (`#demo`) replays match #0's real inputs in the browser;
   its transactions are real, the animation is a playback.
 

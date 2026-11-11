@@ -57,6 +57,9 @@ const RESCUE_MS = Number(process.env.RESCUE_MS ?? 2 * 3600_000); // closed this 
 const DIVIDEND_AT = Number(process.env.DIVIDEND_AT ?? 3000); // bankroll above this pays dividends...
 const DIVIDEND_KEEP = Number(process.env.DIVIDEND_KEEP ?? 2000); // ...down to this
 const HOUSE_FLOOR = Number(process.env.HOUSE_FLOOR ?? 3000); // the house keeps this much for new players
+const HOUSE_LOCKED = 2100; // milliNEAR on the house held by the first deployment's storage, never spendable
+// below this the site warns that the faucet is running low; below one more account it stops making them
+const HOUSE_LOW = Number(process.env.HOUSE_LOW ?? 6000);
 
 const engine = await Engine.load(readFileSync(join(ROOT, "web/engine.wasm")));
 const chain: any = TESTNET ? new TestnetChain({ near: new Near(RPC), contract: CONTRACT, house: HOUSE, keysDir: new URL("../../.keys/", import.meta.url) }) : new LocalChain(engine);
@@ -214,10 +217,28 @@ if (!TESTNET)
     persist();
   }, LADDER_MS);
 
+// ---- the house: funds every new player, so the demo stops when it runs dry ----
+/** ok | low (warn) | empty (no new accounts). Spendable = balance minus locked storage. */
+function houseState() {
+  if (!TESTNET) return "ok";
+  const spendable = chain.balance(HOUSE) - HOUSE_LOCKED;
+  return spendable < FAUCET + 300 ? "empty" : spendable < HOUSE_LOW ? "low" : "ok";
+}
+let houseWas = "ok";
+/** Log every change of state, so `journalctl -u noref | grep house` shows when to refill. */
+function watchHouse() {
+  const now = houseState();
+  if (now === houseWas) return;
+  const line = `house ${HOUSE}: ${eco.fmt(chain.balance(HOUSE))} -> ${now}${now === "ok" ? "" : " (refill: node scripts-refill.mjs)"}`;
+  (now === "ok" ? console.log : console.warn)(line);
+  houseWas = now;
+}
+
 // ---- testnet economy: the chain is the ledger ----
 /** Bankroll = the NPC account's real balance minus its gas reserve; then open/close, rescue, dividends. */
 async function syncNpcs() {
   await chain.refreshBalance(HOUSE);
+  watchHouse();
   const busy = new Set([...live.values()].filter((m: any) => !m.pvp).map((m: any) => m.npc.id));
   for (const n of world.roster) {
     if (busy.has(n.id)) continue; // its stake is locked in a live match; settle first
@@ -227,7 +248,7 @@ async function syncNpcs() {
     // sponsor of last resort: after a while closed, the house backs it again
     if (n.status === "retired" && n.closedAt && nowW() - n.closedAt > RESCUE_MS) {
       const amount = eco.REOPEN_AT + 100 - n.bankroll;
-      if (chain.balance(HOUSE) - amount > HOUSE_FLOOR + 2100) { // ~2.1 NEAR on the house stays locked by the first deployment's storage
+      if (chain.balance(HOUSE) - amount > HOUSE_FLOOR + HOUSE_LOCKED) {
         const hash = await chain.houseBack(n.id, amount);
         eco.sponsor(n, "house", amount, nowW()).events.forEach((t) => feed(t, nowW(), chain.explorer(hash)));
       }
@@ -368,9 +389,16 @@ async function api(req: any, url: URL): Promise<unknown> {
         while (freshLog.length && freshLog[0].t < day) freshLog.shift();
         need(freshLog.filter((f) => f.ip === ip).length < FRESH_PER_IP, "too many new accounts from your network today; log in with an existing name");
         need(freshLog.length < FRESH_PER_DAY, "the demo faucet is resting for today; try again tomorrow");
+        await chain.refreshBalance(HOUSE);
+        watchHouse();
+        need(houseState() !== "empty", "the demo faucet is empty right now, so new names get no test NEAR; watch the recorded match, or come back later");
       }
       const r = await chain.ensurePlayer(q.name, q.account, FAUCET);
-      if (r.fresh) freshLog.push({ ip, t: Date.now() });
+      if (r.fresh) {
+        freshLog.push({ ip, t: Date.now() });
+        await chain.refreshBalance(HOUSE).catch(() => {});
+        watchHouse();
+      }
       world.players[r.id] = { key: q.key };
       persist();
       return { me: r.id, balance: chain.balance(r.id), fresh: r.fresh, tx: r.hash, chain: chainInfo() };
@@ -381,6 +409,35 @@ async function api(req: any, url: URL): Promise<unknown> {
     if (fresh) chain.credit(me, FAUCET);
     persist();
     return { me, balance: chain.balance(me), fresh, chain: chainInfo() };
+  }
+
+  // health for the team: is the faucet able to make new players?
+  if (p === "/api/health") {
+    return { ok: true, house: HOUSE, balance: TESTNET ? chain.balance(HOUSE) : null, faucet: houseState(), newToday: freshLog.length, live: live.size };
+  }
+
+  // the player's own matches that still hold their stake, and what they can sign to get it back
+  if (p === "/api/stuck") {
+    if (!TESTNET || !q.me || !world.players[q.me]) return { stuck: [] };
+    const busy = (id: number) => live.has(id) || invites.has(id);
+    const now = Date.now();
+    const stuck = [];
+    for (const c of await chain.unsettled(q.me)) {
+      if (busy(c.id)) continue; // still being played or waiting on an invite this server knows about
+      const base = { id: c.id, stake: Number(BigInt(c.stake) / 10n ** 21n), opponent: c.a === q.me ? c.b : c.a };
+      if (c.phase === "Open") {
+        if (c.a === q.me) stuck.push({ ...base, action: "cancel", why: "nobody joined" });
+        continue;
+      }
+      if (c.claim) {
+        const at = Number(BigInt(c.window_end_ns) / 1_000_000n);
+        stuck.push({ ...base, action: "finalize", why: "claimed, never paid out", readyAt: at });
+        continue;
+      }
+      const end = Number(BigInt(c.started_ns) / 1_000_000n) + (c.duration / 60) * 1000;
+      stuck.push({ ...base, action: "refund", why: "nobody reported a result", readyAt: end + 10 * 60_000 });
+    }
+    return { stuck, now };
   }
 
   if (p === "/api/state") {
@@ -678,7 +735,7 @@ async function api(req: any, url: URL): Promise<unknown> {
 }
 
 function chainInfo() {
-  return TESTNET ? { kind: "testnet", contract: CONTRACT, house: HOUSE, explorer: "https://testnet.nearblocks.io", windowSecs: WINDOW_SECS, ladderMin: Math.round(LADDER_MS / 60_000) } : { kind: "local", windowSecs: WINDOW_SECS };
+  return TESTNET ? { kind: "testnet", contract: CONTRACT, house: HOUSE, faucet: houseState(), explorer: "https://testnet.nearblocks.io", windowSecs: WINDOW_SECS, ladderMin: Math.round(LADDER_MS / 60_000) } : { kind: "local", windowSecs: WINDOW_SECS };
 }
 
 /** Browser -> NEAR RPC relay (read + broadcast only; it cannot alter a signed tx). */

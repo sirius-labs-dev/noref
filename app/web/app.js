@@ -95,6 +95,7 @@ async function login(name) {
   connect();
   await refresh();
   await checkJoin();
+  refreshStuck();
 }
 
 $("loginform").addEventListener("submit", async (e) => {
@@ -757,12 +758,68 @@ function scheduleRefresh() {
 async function refresh() {
   state = await api(`/api/state?me=${encodeURIComponent(me ?? "")}`);
   chainInfo = state.chain;
+  renderFaucet();
   renderBadge();
   renderAccount();
   renderRoster();
   renderChart();
   renderFeed();
 }
+
+/** The house funds every new name; say so before someone tries and fails. */
+function renderFaucet() {
+  const el = $("faucetnote");
+  const f = chainInfo?.faucet;
+  el.hidden = !f || f === "ok";
+  el.classList.toggle("empty", f === "empty");
+  el.textContent =
+    f === "empty"
+      ? "The demo faucet is empty right now, so a new name gets no test NEAR. Names already created still work, and the recorded match plays without an account."
+      : "The demo faucet is running low; new names may stop getting test NEAR soon.";
+}
+
+// ---------- stakes the player can take back ----------
+const STUCK = {
+  cancel: { label: "Cancel, refund me", done: "your stake came back" },
+  refund: { label: "Refund both", done: "both stakes went back" },
+  finalize: { label: "Pay out", done: "the contract paid the winner" },
+};
+async function refreshStuck() {
+  if (!testnet() || !me || !pc) return;
+  const r = await api(`/api/stuck?me=${encodeURIComponent(me)}`).catch(() => null);
+  if (!r) return;
+  const skew = Date.now() - r.now;
+  const list = $("stucklist");
+  list.replaceChildren();
+  for (const m of r.stuck) {
+    const wait = m.readyAt ? m.readyAt + skew - Date.now() : 0;
+    const li = document.createElement("li");
+    const info = document.createElement("div");
+    const vs = m.opponent ? ` vs ${m.opponent.replace(/\.noref\.testnet$/, "")}` : "";
+    info.innerHTML = `<b>#${m.id}</b>${vs} · ${fmt(m.stake)} each<br><span class="muted small"></span>`;
+    info.querySelector("span").textContent = m.why + (wait > 0 ? ` · possible in ${Math.ceil(wait / 60_000)} min` : "");
+    const b = document.createElement("button");
+    b.className = "small";
+    b.textContent = STUCK[m.action].label;
+    b.disabled = wait > 0;
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      b.textContent = "Signing…";
+      try {
+        const t = await pc.call(m.action, { id: String(m.id) });
+        note("tx", `You signed ${m.action} for match #${m.id}: ${STUCK[m.action].done}`, t.hash);
+      } catch (e) {
+        note("problem", `${m.action} for match #${m.id} failed: ${e.message}`);
+      }
+      await refreshStuck();
+      await refresh();
+    });
+    li.append(info, b);
+    list.append(li);
+  }
+  $("stuckcard").hidden = r.stuck.length === 0;
+}
+setInterval(() => refreshStuck(), 60_000);
 
 let shownBalance = null;
 function renderAccount() {

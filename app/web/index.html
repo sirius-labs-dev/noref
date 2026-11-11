@@ -36,6 +36,7 @@
       <button type="submit">Enter</button>
     </form>
     <p class="err" id="loginerr"></p>
+    <p class="faucetnote" id="faucetnote" hidden></p>
   </section>
 
   <section class="play">
@@ -82,6 +83,11 @@
         <p class="invite-line" id="jointext">…</p>
         <p class="muted small">You lock the same stake. Six rounds, both of you sign every round; if the loser lies about the result, the winner's browser disputes it and the contract replays the match.</p>
         <button id="joinbtn">Lock my stake and play</button>
+      </div>
+      <div class="card stuck" id="stuckcard" hidden>
+        <h2>Stakes waiting for you</h2>
+        <p class="muted small">Matches that still hold your NEAR. The contract lets you take it back yourself, with no server or admin in the way.</p>
+        <ul class="stucklist" id="stucklist"></ul>
       </div>
       <div class="card friend">
         <h2>Play a friend</h2>
