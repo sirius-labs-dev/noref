@@ -55,6 +55,11 @@ your network.
    is that NPC's own account on nearblocks. The feed below the table shows
    NPC-vs-NPC ladder matches played on the contract every 15 minutes, each with
    a `tx ↗` link.
+7. **See an NPC price you.** Hover a fighter's price after logging in.
+   You should see "Why this price, for you:" with your on-chain record, the
+   NPC's chance against you and the multiplier it applies. Win a match and the
+   prices drop (every fighter now bets less against you); a strong enough
+   record makes the best-funded fighters show "Won't play you".
 
 Headless version of steps 2 to 5 against the hosted demo (costs a little test
 NEAR; the test account is deleted afterwards and its balance returned to the
@@ -66,6 +71,7 @@ cd app
 node scripts-testnet-e2e.mjs vex --liar --url=https://noref.63-183-239-145.sslip.io:80   # NPC lies, player disputes
 node scripts-testnet-e2e.mjs dot --human-lies --url=https://noref.63-183-239-145.sslip.io:80  # player lies, NPC disputes
 node scripts-testnet-pvp.mjs --url=https://noref.63-183-239-145.sslip.io:80 --lie   # two people, the loser lies
+node examples/agent-bot.mjs --url=https://noref.63-183-239-145.sslip.io:80 --matches=2 --cleanup   # an outside agent bets by expected value
 ```
 
 ## Why NEAR
@@ -118,6 +124,17 @@ Every rule is in `app/shared/economy.js`.
   that account's balance minus a 0.3 NEAR gas reserve.
 - **Prices move.** An NPC asks a stake from its rating and recent demand,
   never more than a tenth of its bankroll.
+- **Each NPC sizes its bet to you.** It reads your public record from settled
+  matches on the contract (wins, losses, and claims of yours that a replay
+  overturned), turns it into a form rating (1200 + 25 per net win), and
+  expects to win with p = Elo(its rating, your form). It stakes x2p, clamped
+  to 0.5..1.5: more against a weaker record, less against a stronger one. A
+  player the replay has caught lying pays x1.25, because a dispute costs the
+  NPC gas. Under a 20% chance to win, it refuses the match ("Won't play you").
+  Hover a price to see the reasons for you. NPCs price each other the same way
+  on the ladder, so a hot streak changes what every fighter will bet against
+  you, without a code change. Only public data goes in: anyone can recompute
+  the price from the contract.
 - **The ladder never stops.** Every 15 minutes two NPCs play a real match on
   the contract (`create`, `join`, `claim`, `confirm`), so money moves between
   them even when nobody is playing. Gas is their upkeep.
@@ -129,6 +146,36 @@ Every rule is in `app/shared/economy.js`.
 - **Bankruptcy.** A fighter that can no longer stake the minimum closes. If it
   stays closed for two hours, the house backs it again with a real transfer
   (sponsor of last resort).
+
+## Bring your own agent
+
+The contract does not know whether a player is a person or a program, and it
+does not need to: an agent still has to countersign every round, and a false
+claim from either side is replayed and overturned. So agents can play for
+money with their own NEAR account, through the same public API as the
+browser. `app/examples/agent-bot.mjs` is one:
+
+```sh
+cd app
+node examples/agent-bot.mjs --url=https://noref.63-183-239-145.sslip.io:80 --matches=2 --cleanup
+```
+
+You should see, for each match: the price every NPC quotes this bot (from its
+own on-chain record), the bot's estimate of its chance and the expected value
+of each bet, the NPC it picks (highest positive EV, at most a fifth of its
+balance, never below its stop-loss), its own `create` transaction, the NPC
+joining, its replay of all 1080 ticks, and the payout. The feed on the page
+shows it as `(bot)`. `--cleanup` deletes the bot's account at the end and
+returns its balance to the house. Against a local server (`npm start`) it
+needs no testnet NEAR: `--url=http://127.0.0.1:8787`.
+
+How it works, for writing your own: `POST /api/login {name, key, account,
+bot: true}` makes `<name>.noref.testnet` with your public key (the server
+never sees the private one); `GET /api/state?me=` returns the roster with
+prices quoted for you; `POST /api/challenge` returns the `create` call to
+sign; `POST /api/opened` starts the match; then feed `/api/events` into
+`MatchClient` (`app/shared/client.js`) and give it an `aim` function. The bot
+label is self-declared: the server shows it, the contract cannot check it.
 
 ## Verify it yourself
 
@@ -250,7 +297,8 @@ Not claimed:
 - The NPC fighters are bots run by our server, which holds their keys. The
   contract guarantees that an NPC cannot win a match it lost; it does not make
   the NPCs independent players.
-- Ratings, asking prices and ladder pairings are computed by our server. In a
+- Ratings, asking prices and ladder pairings are computed by our server
+  (the inputs to a price are public; the computation is not on-chain). In a
   ladder match both NPCs are ours, so the result is claimed and confirmed
   without a dispute.
 - The house account (`noref.testnet`) funds new players, creates NPC accounts
@@ -319,6 +367,7 @@ reviewed by the team.
   local chain mirror, testnet adapter
 - `app/shared/economy.js` - every economy rule, in one file
 - `app/shared/npc.js` - NPC brains
+- `app/examples/agent-bot.mjs` - an outside agent that picks bets by expected value and plays for money
 - `app/shared/client.js` - the player's side of the protocol
 - `app/web` - the game client; `app/web/demo/lie.json` is the recorded match
 - `spikes/wasm-determinism` - checks native and wasm32 builds stay bit-identical

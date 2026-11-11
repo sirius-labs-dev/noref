@@ -13,6 +13,12 @@
 // - BANKRUPTCY: when a tenth of the bankroll no longer covers the minimum
 //   stake, the NPC closes its doors. It reopens only when
 //   sponsors bring its bankroll back up.
+// - KNOW YOUR OPPONENT: an NPC sizes each bet to the opponent in front of it,
+//   using only what anyone can read from the contract. It expects to win with
+//   p = Elo(its rating, the opponent's form rating), stakes x(2p) clamped to
+//   0.5..1.5 (more against a weaker player, less against a stronger one), asks
+//   x1.25 from anyone the replay has caught lying (a dispute costs it gas),
+//   and refuses a match it expects to win less than 20% of the time.
 // - DIVIDENDS: an NPC whose bankroll grows past a ceiling pays the excess out
 //   to its backers, pro rata to their shares. Money keeps circulating instead
 //   of piling up in the best fighter.
@@ -31,10 +37,44 @@ export const DEMAND_WINDOW_MS = 60 * 60 * 1000; // challenges in the last hour c
 export const DEMAND_STEP = 0.1; // +10% price per recent challenge
 export const DEMAND_CAP = 5; // at most +50%
 
+export const FORM_STEP = 25; // form rating: 1200 + 25 per net on-chain win
+export const EDGE_MIN = 0.5;
+export const EDGE_MAX = 1.5;
+export const LIAR_PREMIUM = 1.25;
+export const DECLINE_BELOW = 0.2; // win chance under which an NPC refuses to play
+
 export const fmt = (m) => (m / MILLI).toFixed(3).replace(/\.?0+$/, "") + " NEAR";
 
-/** The stake an NPC asks right now, and why. */
-export function askStake(npc, now = Date.now()) {
+/**
+ * A player's public record from settled matches on the contract: wins,
+ * losses, draws, and claims of theirs that the replay overturned.
+ * finals: [{a, b, settled, result, claimBy, claimWinner}] with result 0 draw,
+ * 1 creator (a) won, 2 joiner (b) won.
+ */
+export function tally(account, finals) {
+  const r = { wins: 0, losses: 0, draws: 0, liesCaught: 0 };
+  for (const f of finals) {
+    if (!f.settled || (f.a !== account && f.b !== account) || f.result == null) continue;
+    const side = f.a === account ? 1 : 2;
+    if (f.result === 0) r.draws++;
+    else if (f.result === side) r.wins++;
+    else r.losses++;
+    if (f.claimBy === account && f.claimWinner !== f.result) r.liesCaught++;
+  }
+  return r;
+}
+
+/** Form rating from a public record: 1200 + 25 per net win, kept within 800..1800. */
+export function formRating(rec) {
+  return Math.max(800, Math.min(1800, 1200 + FORM_STEP * (rec.wins - rec.losses)));
+}
+
+/**
+ * The stake an NPC asks right now, and why. With `opp` ({rating, wins,
+ * losses, draws, liesCaught}) the price is for that opponent; `declined`
+ * says the NPC will not play them at all.
+ */
+export function askStake(npc, now = Date.now(), opp = null) {
   const why = [];
   const ratingFactor = (npc.rating / 1200) ** 2;
   let stake = BASE_STAKE * ratingFactor;
@@ -45,6 +85,22 @@ export function askStake(npc, now = Date.now()) {
     stake *= demand;
     why.push(`${recent} challenge(s) in the last hour: x${demand.toFixed(1)} demand`);
   }
+  let declined = false;
+  if (opp) {
+    const p = expected(npc.rating, opp.rating);
+    const edge = Math.max(EDGE_MIN, Math.min(EDGE_MAX, 2 * p));
+    stake *= edge;
+    const rec = opp.wins + opp.losses + (opp.draws ?? 0) > 0 ? `${opp.wins}W ${opp.losses}L on-chain` : "no matches yet";
+    why.push(`vs form ${Math.round(opp.rating)} (${rec}) it expects to win ${Math.round(100 * p)}%: x${edge.toFixed(2)}`);
+    if (opp.liesCaught > 0) {
+      stake *= LIAR_PREMIUM;
+      why.push(`replay caught this player lying ${opp.liesCaught}x: x${LIAR_PREMIUM} (a dispute costs it gas)`);
+    }
+    if (p < DECLINE_BELOW) {
+      declined = true;
+      why.push(`declines: under ${Math.round(100 * DECLINE_BELOW)}% to win is a bad bet for its bankroll`);
+    }
+  }
   const cap = Math.floor(npc.bankroll / RISK_SHARE);
   if (stake > cap) {
     stake = cap;
@@ -52,7 +108,7 @@ export function askStake(npc, now = Date.now()) {
   }
   stake = Math.max(MIN_STAKE, Math.round(stake / 10) * 10);
   if (npc.bankroll < BROKE_BELOW) why.push(`closed: bankroll below ${fmt(BROKE_BELOW)}`);
-  return { stake, why };
+  return { stake, why, declined };
 }
 
 export function isOpen(npc) {

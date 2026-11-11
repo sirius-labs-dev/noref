@@ -5,6 +5,7 @@
 
 import { createPublicKey, verify } from "node:crypto";
 import { Engine, hex, unhex, SIDE } from "../shared/engine.js";
+import * as eco from "../shared/economy.js";
 
 const SPKI_ED25519 = Buffer.from("302a300506032b6570032100", "hex");
 
@@ -81,6 +82,11 @@ export class LocalChain {
     this.matches.push({ id, a: who, b: null, stake, duration, keyA, keyB: null, phase: "open", windowSecs, startedMs: 0, claim: null, replayed: null, windowEndMs: 0, result: null });
     this.emit(id, "create", `${who} opened match #${id} and locked ${stake / 1000} NEAR`);
     return id;
+  }
+
+  /** The account's public record from settled matches (same rules as the testnet adapter). */
+  async record(account: string) {
+    return eco.tally(account, this.matches.map((m) => ({ a: m.a, b: m.b, settled: m.phase === "settled", result: m.result, claimBy: m.claim?.by ?? null, claimWinner: m.claim?.winner ?? null })));
   }
 
   /** Creator withdraws an open match nobody joined (mirrors the contract's `cancel`). */

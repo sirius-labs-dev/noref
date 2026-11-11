@@ -59,3 +59,24 @@ test("a chain-synced bankroll closes and reopens a fighter", () => {
   assert.equal(n.status, "open");
   assert.equal(n.closedAt, undefined);
 });
+
+test("an NPC prices the opponent from its public record", () => {
+  const n = npc();
+  n.bankroll = 100_000;
+  const fresh = { wins: 0, losses: 0, draws: 0, liesCaught: 0 };
+  const strong = { wins: 16, losses: 0, draws: 0, liesCaught: 0 };
+  const weak = { wins: 0, losses: 8, draws: 0, liesCaught: 0 };
+  const q = (r) => eco.askStake(n, 0, { ...r, rating: eco.formRating(r) });
+  assert.ok(q(weak).stake > q(fresh).stake, "bets more against a weaker record");
+  assert.ok(q(strong).stake < q(fresh).stake, "bets less against a stronger one");
+  assert.ok(q({ ...fresh, liesCaught: 1 }).stake > q(fresh).stake, "a caught liar pays a premium");
+  assert.equal(q(fresh).declined, false);
+  const champ = { wins: 40, losses: 0, draws: 0, liesCaught: 0 };
+  assert.equal(q(champ).declined, true, "refuses a match it expects to lose");
+});
+
+test("tally reads wins, losses and overturned claims", () => {
+  const f = (a, b, result, claimBy = null, claimWinner = null) => ({ a, b, settled: true, result, claimBy, claimWinner });
+  const r = eco.tally("me", [f("me", "x", 1), f("x", "me", 1, "me", 2), f("me", "y", 0), { ...f("me", null, null), settled: false }]);
+  assert.deepEqual(r, { wins: 1, losses: 1, draws: 1, liesCaught: 1 });
+});

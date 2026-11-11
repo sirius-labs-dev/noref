@@ -8,12 +8,16 @@
 //   turned into the same events the local chain emits, plus the tx hash
 //   when we know it.
 
+import * as eco from "../shared/economy.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { Near, keyFromSecret, newKey, action, TGAS, NEAR, milliToYocto, yoctoToMilli } from "../shared/near.js";
 import { SIDE } from "../shared/engine.js";
 import type { Match, ChainEvent } from "./chain-local.ts";
 
 const PHASE: Record<string, Match["phase"]> = { Open: "open", Live: "live", Settled: "settled", Cancelled: "cancelled" };
+
+/** How a finished match ended, as the contract stores it (raw account ids). */
+export type Final = { a: string; b: string | null; settled: boolean; result: number | null; claimBy: string | null; claimWinner: number | null };
 
 export class TestnetChain {
   kind = "testnet";
@@ -276,8 +280,29 @@ export class TestnetChain {
     }
   }
 
-  /** Settled/cancelled matches never change again; remember who played them. */
-  private done = new Map<number, string[]>();
+  /** Settled/cancelled matches never change again; remember who played them and how they ended. */
+  private done = new Map<number, Final>();
+
+  /**
+   * Read the last `depth` matches on the contract that are not known to be
+   * over yet (terminal ones are cached forever) and return the raw views of
+   * the non-terminal ones that involve `account`.
+   */
+  private async scan(account: string, depth: number) {
+    const count = Number(await this.near.view(this.contract, "match_count"));
+    const ids = [];
+    for (let id = count - 1; id >= Math.max(0, count - depth); id--) if (!this.done.has(id)) ids.push(id);
+    const out: any[] = [];
+    for (let i = 0; i < ids.length; i += 10) {
+      const batch = await Promise.all(ids.slice(i, i + 10).map((id) => this.near.view(this.contract, "get_match", { id: String(id) }).then((c: any) => [id, c])));
+      for (const [id, c] of batch) {
+        if (!c) continue;
+        if (c.phase === "Settled" || c.phase === "Cancelled") this.done.set(id, { a: c.a, b: c.b ?? null, settled: c.phase === "Settled", result: c.result ?? null, claimBy: c.claim?.by ?? null, claimWinner: c.claim?.winner ?? null });
+        else if (c.a === account || c.b === account) out.push({ id, ...c });
+      }
+    }
+    return { out, from: Math.max(0, count - depth) };
+  }
 
   /**
    * The account's matches among the last `depth` on the contract that still
@@ -285,23 +310,13 @@ export class TestnetChain {
    * view, so the browser can decide to cancel, refund or finalize.
    */
   async unsettled(account: string, depth = 150) {
-    const count = Number(await this.near.view(this.contract, "match_count"));
-    const ids = [];
-    for (let id = count - 1; id >= Math.max(0, count - depth); id--) {
-      const who = this.done.get(id);
-      if (!who || who.includes(account)) ids.push(id);
-    }
-    const out: any[] = [];
-    for (let i = 0; i < ids.length; i += 10) {
-      const batch = await Promise.all(ids.slice(i, i + 10).map((id) => this.near.view(this.contract, "get_match", { id: String(id) }).then((c: any) => [id, c])));
-      for (const [id, c] of batch) {
-        if (!c) continue;
-        const players = [c.a, c.b].filter(Boolean);
-        if (c.phase === "Settled" || c.phase === "Cancelled") this.done.set(id, players);
-        else if (players.includes(account)) out.push({ id, ...c });
-      }
-    }
-    return out;
+    return (await this.scan(account, depth)).out;
+  }
+
+  /** The account's public record from settled matches on the contract (anyone can recompute it). */
+  async record(account: string, depth = 150) {
+    const { from } = await this.scan(account, depth);
+    return eco.tally(account, [...this.done.entries()].filter(([id]) => id >= from).map(([, f]) => f));
   }
 
   /** Read the match from the contract and emit events for whatever changed. */

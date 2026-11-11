@@ -7,7 +7,7 @@
 //                                        needs ../.keys/<HOUSE>.json)
 //
 // API (JSON):
-//   POST /api/login {name, key}                -> account, faucet balance
+//   POST /api/login {name, key, bot?}          -> account, faucet balance (bot: true labels an agent)
 //   GET  /api/state?me=                        -> roster, prices + reasons, balances, events
 //   GET  /api/events?me=                       -> server-sent events
 //   POST /api/challenge {me, npc, liar}        -> starts a match vs an NPC
@@ -65,7 +65,7 @@ const engine = await Engine.load(readFileSync(join(ROOT, "web/engine.wasm")));
 const chain: any = TESTNET ? new TestnetChain({ near: new Near(RPC), contract: CONTRACT, house: HOUSE, keysDir: new URL("../../.keys/", import.meta.url) }) : new LocalChain(engine);
 
 // ---- persistent economy ----
-type World = { roster: any[]; feed: { t: number; text: string }[]; players: Record<string, { key: string }>; balances: Record<string, number>; simDays: number; clockOffsetMs?: number };
+type World = { roster: any[]; feed: { t: number; text: string }[]; players: Record<string, { key: string; bot?: boolean }>; balances: Record<string, number>; simDays: number; clockOffsetMs?: number };
 mkdirSync(DATA, { recursive: true });
 const FILE = join(DATA, "world.json");
 const world: World = existsSync(FILE) ? JSON.parse(readFileSync(FILE, "utf8")) : { roster: eco.startingRoster(), feed: [], players: {}, balances: {}, simDays: 0 };
@@ -103,13 +103,26 @@ function broadcast(kind: string, data: unknown) {
 
 // ---- matches ----
 const live = new Map<number, LiveMatch>();
-const escrow = new Map<number, { npc: string; stake: number }>();
-const pendingOpen = new Map<string, { npc: string; stake: number; liar: boolean; t: number }>();
+const escrow = new Map<number, { npc: string; stake: number; oppRating?: number }>();
+const pendingOpen = new Map<string, { npc: string; stake: number; liar: boolean; t: number; oppRating: number }>();
 // person vs person: open invites by match id, and testnet creates waiting for their tx
 const invites = new Map<number, { host: string; stake: number; t: number }>();
 const pendingPvp = new Map<string, { stake: number; t: number }>();
 const inMatch = (me: string) => [...live.values()].some((m: any) => (m.pvp ? m.players.includes(me) : m.human === me));
 const usedTx = new Set<string>();
+
+// ---- a player's public form, read from settled matches on the contract ----
+const formCache = new Map<string, { t: number; v: any }>();
+/** {rating, wins, losses, draws, liesCaught}; NPCs price their bets with this. */
+async function form(me: string) {
+  const hit = formCache.get(me);
+  if (hit && Date.now() - hit.t < 60_000) return hit.v;
+  const rec = await (chain as any).record(TESTNET ? chain.acct(me) : me);
+  const v = { ...rec, rating: eco.formRating(rec) };
+  formCache.set(me, { t: Date.now(), v });
+  return v;
+}
+const tag = (me: string) => (world.players[me]?.bot ? `${me} (bot)` : me);
 
 chain.onEvent = (e) => {
   const m = chain.matches[e.match];
@@ -125,7 +138,8 @@ function onSettled(id: number) {
   const m = chain.matches[id];
   const lm: any = live.get(id);
   if (lm?.pvp) {
-    const [a, b] = lm.players.map(PvpMatch.short);
+    const [a, b] = lm.players.map((x: string) => PvpMatch.short(x) + (world.players[x]?.bot ? " (bot)" : ""));
+    lm.players.forEach((x: string) => formCache.delete(x));
     const r = m.replayed ? (m.replayed.winner !== m.claim?.winner ? " after a replay overturned a false claim" : " after a replay confirmed the claim") : "";
     feed(`${a} vs ${b}: ${m.result === SIDE.DRAW ? "draw" : (m.result === SIDE.FIRST ? a : b) + " won"} ${eco.fmt(2 * m.stake)} pot${r}`);
     live.delete(id);
@@ -142,8 +156,10 @@ function onSettled(id: number) {
   if (!TESTNET) chain.balances.set(npc.id, 0);
   const score = m.result === SIDE.DRAW ? 0.5 : m.result === npcSide ? 1 : 0;
   npc.bankroll += esc.stake; // un-escrow, then book the result
-  const events = eco.recordResult(npc, { delta: payout - esc.stake, score, oppRating: 1200, now: nowW(), upkeep: TESTNET ? 0 : eco.UPKEEP });
-  const human = m.a === npc.id ? m.b : m.a;
+  const events = eco.recordResult(npc, { delta: payout - esc.stake, score, oppRating: esc.oppRating ?? 1200, now: nowW(), upkeep: TESTNET ? 0 : eco.UPKEEP });
+  const humanId = m.a === npc.id ? m.b : m.a;
+  formCache.delete(humanId);
+  const human = tag(humanId);
   const replayNote = m.replayed ? (m.replayed.winner !== m.claim?.winner ? " after a replay overturned a false claim" : " after a replay confirmed the claim") : "";
   feed(`${human} vs ${npc.name}: ${m.result === SIDE.DRAW ? "draw" : score === 1 ? npc.name + " won" : human + " won"} ${eco.fmt(2 * m.stake)} pot${replayNote}`);
   events.forEach((t) => feed(t));
@@ -160,9 +176,12 @@ setInterval(() => {
 
 // ---- NPC vs NPC ladder (also used by fast-forward) ----
 function simulateNpcMatch(a: any, b: any, rng: () => number, now: number, book = true) {
-  const pa = eco.askStake(a, now).stake;
-  const pb = eco.askStake(b, now).stake;
-  const stake = Math.min(pa, pb);
+  // each NPC prices the other from its public record; either one may refuse
+  const asOpp = (n: any) => ({ rating: n.rating, wins: n.wins, losses: n.losses, draws: n.draws ?? 0, liesCaught: 0 });
+  const qa = eco.askStake(a, now, asOpp(b));
+  const qb = eco.askStake(b, now, asOpp(a));
+  if (qa.declined || qb.declined) return null;
+  const stake = Math.min(qa.stake, qb.stake);
   if (stake < eco.MIN_STAKE) return null;
   engine.reset();
   const R = engine.ROUND_TICKS;
@@ -318,9 +337,9 @@ function sample<T>(xs: T[], max: number): T[] {
   out.push(xs[xs.length - 1]);
   return out;
 }
-function rosterView(now = nowW()) {
+function rosterView(now = nowW(), opp: any = null) {
   return world.roster.map((n) => {
-    const p = eco.askStake(n, now);
+    const p = eco.askStake(n, now, opp);
     return {
       id: n.id,
       account: TESTNET ? chain.acct(n.id) : null,
@@ -335,6 +354,7 @@ function rosterView(now = nowW()) {
       status: eco.isOpen(n) ? "open" : "retired",
       stake: p.stake,
       why: p.why,
+      declined: p.declined,
       sharePrice: eco.sharePrice(n),
       holders: n.holders,
       history: sample(n.history, 240),
@@ -399,13 +419,15 @@ async function api(req: any, url: URL): Promise<unknown> {
         await chain.refreshBalance(HOUSE).catch(() => {});
         watchHouse();
       }
-      world.players[r.id] = { key: q.key };
+      world.players[r.id] = { key: q.key, ...(q.bot ? { bot: true } : {}) };
+      if (r.fresh && q.bot) feed(`${r.id} joined as a bot: an agent with its own NEAR account`);
       persist();
       return { me: r.id, balance: chain.balance(r.id), fresh: r.fresh, tx: r.hash, chain: chainInfo() };
     }
     const me = `${q.name}.local`;
     const fresh = !world.players[me];
-    world.players[me] = { key: q.key };
+    world.players[me] = { key: q.key, ...(q.bot ? { bot: true } : {}) };
+    if (fresh && q.bot) feed(`${me} joined as a bot: an agent with its own account`);
     if (fresh) chain.credit(me, FAUCET);
     persist();
     return { me, balance: chain.balance(me), fresh, chain: chainInfo() };
@@ -442,7 +464,7 @@ async function api(req: any, url: URL): Promise<unknown> {
 
   if (p === "/api/state") {
     return {
-      roster: rosterView(),
+      roster: rosterView(nowW(), q.me && world.players[q.me] ? await form(q.me).catch(() => null) : null),
       feed: world.feed.slice(-60),
       me: q.me && world.players[q.me] ? { id: q.me, balance: TESTNET ? await chain.refreshBalance(q.me).catch(() => chain.balance(q.me)) : chain.balance(q.me) } : null,
       chainEvents: chain.events.slice(-40),
@@ -459,19 +481,22 @@ async function api(req: any, url: URL): Promise<unknown> {
     const npc = npcById(q.npc);
     need(npc && eco.isOpen(npc), "that NPC is closed");
     need(!inMatch(me), "finish your current match first");
-    const { stake } = eco.askStake(npc, nowW());
+    const opp = await form(me);
+    const quote = eco.askStake(npc, nowW(), opp);
+    need(!quote.declined, `${npc.name} won't play you: ${quote.why[quote.why.length - 1]}`);
+    const { stake } = quote;
     if (TESTNET) await chain.refreshBalance(me);
     need(chain.balance(me) >= stake + (TESTNET ? 20 : 0), `you need ${eco.fmt(stake)}`);
     eco.noteChallenge(npc, nowW());
     if (TESTNET) {
       // step 1 of 2: the browser signs `create` itself, then calls /api/opened
       await chain.ensureNpc(npc.id, stake);
-      pendingOpen.set(me, { npc: npc.id, stake, liar: !!q.liar, t: Date.now() });
+      pendingOpen.set(me, { npc: npc.id, stake, liar: !!q.liar, t: Date.now(), oppRating: opp.rating });
       return { open: { contract: CONTRACT, method: "create", args: { duration: engine.MATCH_TICKS, session_key: pl.key, window_secs: WINDOW_SECS, opponent: chain.acct(npc.id) }, deposit: String(BigInt(stake) * 10n ** 21n) }, stake };
     }
     // human opens (side A, ball 0), NPC joins (side B, ball 1)
     const id = chain.create(me, stake, engine.MATCH_TICKS, pl.key, WINDOW_SECS);
-    return startLive(id, me, pl, npc, stake, !!q.liar);
+    return startLive(id, me, pl, npc, stake, !!q.liar, opp.rating);
   }
 
   // ---- person vs person, by invite link ----
@@ -573,7 +598,7 @@ async function api(req: any, url: URL): Promise<unknown> {
     // verify what the player actually put on-chain
     need(m.a === me && m.phase === "open" && m.keyA === pl.key && (m as any).invited === npc.id && m.duration === engine.MATCH_TICKS && m.stake === o.stake, "on-chain match does not match the challenge");
     pendingOpen.delete(me);
-    return startLive(id, me, pl, npc, o.stake, o.liar);
+    return startLive(id, me, pl, npc, o.stake, o.liar, o.oppRating);
   }  function startPvp(id: number, me: string) {
     const m: any = chain.matches[id];
     const inv = invites.get(id)!;
@@ -594,7 +619,7 @@ async function api(req: any, url: URL): Promise<unknown> {
     return { match: pm.info(pm.sideOf(me)), stake: inv.stake };
   }
 
-  async function startLive(id: number, me: string, pl: any, npc: any, stake: number, liar: boolean) {
+  async function startLive(id: number, me: string, pl: any, npc: any, stake: number, liar: boolean, oppRating = 1200) {
     const lm = new LiveMatch({
       id,
       human: me,
@@ -609,7 +634,7 @@ async function api(req: any, url: URL): Promise<unknown> {
     });
     npc.bankroll -= stake; // escrow from bankroll into its chain account
     if (!TESTNET) chain.credit(npc.id, stake);
-    escrow.set(id, { npc: npc.id, stake });
+    escrow.set(id, { npc: npc.id, stake, oppRating });
     live.set(id, lm);
     try {
       await chain.join(npc.id, id, lm.npcKey.pub);

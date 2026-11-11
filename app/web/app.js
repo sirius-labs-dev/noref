@@ -890,13 +890,13 @@ function renderRoster() {
       </div>
       <div class="price">asks ${fmt(n.stake)}${tr ? `<span class="trend ${tr.pct >= 0 ? "up" : "down"}">${tr.pct >= 0 ? "▲" : "▼"} ${Math.abs(tr.pct).toFixed(0)}%</span>${tr.svg}` : ""}</div>
       <div class="acts">
-        <button class="small" data-act="fight" ${n.status !== "open" || busy || !state.me ? "disabled" : ""}>Challenge</button>
+        <button class="small" data-act="fight" ${n.status !== "open" || n.declined || busy || !state.me ? "disabled" : ""} ${n.declined ? `title="${n.why[n.why.length - 1].replace(/"/g, "&quot;")}"` : ""}>${n.declined ? "Won't play you" : "Challenge"}</button>
         <button class="small ghost" data-act="back" ${!state.me ? "disabled" : ""}>Back with ${BACK()} NEAR</button>
         ${mine > 0 ? `<button class="small ghost" data-act="cash">Cash out ${mine.toFixed(1)} sh (${fmt(Math.floor(mine * n.sharePrice))})</button>` : ""}
       </div>`;
     const price = li.querySelector(".price");
-    price.addEventListener("mouseenter", (ev) => showTip(ev, ["Why this price:", ...n.why]));
-    price.addEventListener("mousemove", (ev) => showTip(ev, ["Why this price:", ...n.why]));
+    price.addEventListener("mouseenter", (ev) => showTip(ev, [state.me ? "Why this price, for you:" : "Why this price:", ...n.why]));
+    price.addEventListener("mousemove", (ev) => showTip(ev, [state.me ? "Why this price, for you:" : "Why this price:", ...n.why]));
     price.addEventListener("mouseleave", () => (tip.hidden = true));
     li.querySelector('[data-act="fight"]').addEventListener("click", () => challenge(n.id));
     li.querySelector('[data-act="back"]').addEventListener("click", async () => {
