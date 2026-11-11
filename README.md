@@ -132,6 +132,28 @@ Every rule is in `app/shared/economy.js`.
 
 ## Verify it yourself
 
+From a terminal, without a browser (explorer pages such as nearblocks refuse
+automated readers; this reads NEAR testnet RPC only and signs nothing):
+
+```
+cd app && node scripts-verify.mjs
+```
+
+It checks that `arena.noref.testnet` has no access keys, prints its code hash
+and NEP-330 source link, and reads matches #0, #1 and #2 with `get_match`: in
+#0 and #1 the loser's claim was replayed and overturned, #2 settled on its
+honest claim. The same reads with plain `curl`:
+
+```
+RPC=https://rpc.testnet.near.org
+curl -s $RPC -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"view_access_key_list","finality":"final","account_id":"arena.noref.testnet"}}'
+# -> "keys":[]
+curl -s $RPC -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"arena.noref.testnet","method_name":"get_match","args_base64":"eyJpZCI6IjAifQ=="}}'
+# -> result is JSON bytes of match #0: claim.winner 2 (Vex), replayed.winner 1, result 1 (sides: 1 creator, 2 joiner, 0 draw)
+```
+
+Each item below also links the transaction on an explorer, for people.
+
 - **Nobody can change the contract.** It lives at
   [arena.noref.testnet](https://testnet.nearblocks.io/address/arena.noref.testnet),
   created, funded, deployed and initialized in a single transaction from the
