@@ -1,14 +1,14 @@
 {
- "recordedAt": "2026-11-11T01:05:12.481Z",
- "contract": "noref.testnet",
- "match": 14,
- "player": "e2ef1u8w.noref.testnet",
+ "recordedAt": "2026-11-11T02:34:14.048Z",
+ "contract": "arena.noref.testnet",
+ "match": 0,
+ "player": "e2ei8afu.noref.testnet",
  "npc": {
   "id": "vex",
   "name": "Vex",
   "style": "bully"
  },
- "stake": 120,
+ "stake": 140,
  "rounds": 6,
  "roundTicks": 180,
  "duration": 1080,
@@ -25,8 +25,8 @@
     },
     {
      "ball": 1,
-     "dvx": "-51350293991",
-     "dvy": "-3764099842"
+     "dvx": "-45404069024",
+     "dvy": "-1263771770"
     }
    ]
   },
@@ -40,8 +40,8 @@
     },
     {
      "ball": 1,
-     "dvx": "-5198018730",
-     "dvy": "46671574194"
+     "dvx": "-36007657011",
+     "dvy": "-20243720316"
     }
    ]
   },
@@ -49,9 +49,14 @@
    "tick": 360,
    "entries": [
     {
+     "ball": 0,
+     "dvx": "-30606645734",
+     "dvy": "19032435361"
+    },
+    {
      "ball": 1,
-     "dvx": "46621099759",
-     "dvy": "-21851640620"
+     "dvx": "48395583108",
+     "dvy": "-1946883664"
     }
    ]
   },
@@ -59,14 +64,9 @@
    "tick": 540,
    "entries": [
     {
-     "ball": 0,
-     "dvx": "-14781302707",
-     "dvy": "-4483859155"
-    },
-    {
      "ball": 1,
-     "dvx": "-45923588159",
-     "dvy": "7420625642"
+     "dvx": "-50604014651",
+     "dvy": "9500254827"
     }
    ]
   },
@@ -75,13 +75,13 @@
    "entries": [
     {
      "ball": 0,
-     "dvx": "30876300352",
-     "dvy": "-1010785415"
+     "dvx": "-50093382337",
+     "dvy": "-3283293742"
     },
     {
      "ball": 1,
-     "dvx": "-5792835239",
-     "dvy": "47972168455"
+     "dvx": "-37743068824",
+     "dvy": "-8582522201"
     }
    ]
   },
@@ -90,13 +90,13 @@
    "entries": [
     {
      "ball": 0,
-     "dvx": "-38616050958",
-     "dvy": "0"
+     "dvx": "2008964751",
+     "dvy": "10099747831"
     },
     {
      "ball": 1,
-     "dvx": "-46474284827",
-     "dvy": "-22162174768"
+     "dvx": "46157876783",
+     "dvy": "-18373759658"
     }
    ]
   }
@@ -104,20 +104,20 @@
  "events": [
   {
    "kind": "create",
-   "text": "e2ef1u8w.noref.testnet opened match #14 on noref.testnet and locked 0.12 NEAR",
-   "tx": "D8PEZMfnFhzNanfj8mCGdMv1636HcVr8risyXXGokRYa",
+   "text": "e2ei8afu.noref.testnet opened match #0 on arena.noref.testnet and locked 0.14 NEAR",
+   "tx": "E7TE5FBX3sjtLjUuwHmzJek37LBGvipBmtQinDFYafUU",
    "data": null
   },
   {
    "kind": "join",
-   "text": "vex joined and locked 0.12 NEAR. Pot on-chain: 0.24 NEAR",
-   "tx": "FfRtiiAcjzGXyfqUGmYiJt3P4kiwkrg2ntKz2fMRv18L",
+   "text": "vex joined and locked 0.14 NEAR. Pot on-chain: 0.28 NEAR",
+   "tx": "5fzietVZKF8yx6sK7a7D4aSG5imqn2gWapiZsvV6iy2H",
    "data": null
   },
   {
    "kind": "claim",
    "text": "vex claims: vex won. Dispute window 15s",
-   "tx": "GWzy4zSjLHbxSLszRH9dUrbgKMARQ5r76qhzsMfGZBHF",
+   "tx": "FnBKPJ1ucUDtVLxYdr9LZ3XFFZTH1b2ghpnNk7mP9fjy",
    "data": {
     "winner": 2,
     "by": "vex"
@@ -125,25 +125,25 @@
   },
   {
    "kind": "replay",
-   "text": "e2ef1u8w.noref.testnet disputed. The contract replayed all 1080 ticks on NEAR (18.5 Tgas): e2ef1u8w.noref.testnet won. The claim was false.",
-   "tx": "9EYsrnD5rLJTyzgV83aAuarbSmekHyikd7PAiD9Wncyp",
+   "text": "e2ei8afu.noref.testnet disputed. The contract replayed all 1080 ticks on NEAR (18.3 Tgas): e2ei8afu.noref.testnet won. The claim was false.",
+   "tx": "FKs7AHjnkVnzpyRmkoipr5kn8qzunXfWyHyFfbRH6s5R",
    "data": {
     "winner": 1,
     "overturned": true,
-    "finalRoot": "138dd5c9dc47a4c8bd681ff2ed8fa10c5585a643f62d6b1d38b1c57386c15a01",
+    "finalRoot": "68254509d9b055df5bef01dfaf754ae2fbf3e30b9d93f9706e60dd18f9d7e1b2",
     "signedTick": 1079
    }
   },
   {
    "kind": "finalize",
    "text": "Dispute window closed; anyone may finalize",
-   "tx": "4272xoVGdQZze7StfJAtdpYLqi2hbqwFgnMRPQ2P6mUK",
+   "tx": "8666m5XTzGAFSVnQ9rFwn9RTdF9wmj1ienYfdG6CnPN2",
    "data": null
   },
   {
    "kind": "settle",
-   "text": "Contract paid 0.24 NEAR to e2ef1u8w.noref.testnet",
-   "tx": "4272xoVGdQZze7StfJAtdpYLqi2hbqwFgnMRPQ2P6mUK",
+   "text": "Contract paid 0.28 NEAR to e2ei8afu.noref.testnet",
+   "tx": "8666m5XTzGAFSVnQ9rFwn9RTdF9wmj1ienYfdG6CnPN2",
    "data": {
     "winner": 1
    }

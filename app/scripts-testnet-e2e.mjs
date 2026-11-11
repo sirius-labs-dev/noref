@@ -77,8 +77,8 @@ try {
       const m = await pc.near.view(login.chain.contract, "get_match", { id: String(openId) });
       if (m?.phase === "Open") log(`cancelled open match #${openId}: ${(await pc.call("cancel", { id: String(openId) })).hash}`);
     }
-    const r = await pc.near.send(me, acct, me, [action.deleteAccount(login.chain.contract)]);
-    log(`deleted ${me}, balance returned to ${login.chain.contract}: ${r.hash}`);
+    const r = await pc.near.send(me, acct, me, [action.deleteAccount(login.chain.house ?? login.chain.contract)]);
+    log(`deleted ${me}, balance returned to ${login.chain.house ?? login.chain.contract}: ${r.hash}`);
     rmSync(keyPath);
   };
 

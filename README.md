@@ -23,9 +23,9 @@ is served on port 80, so the `:80` is part of the link).
    You should see: six rounds, each with "NPC signature ✓"; Vex claiming it
    won; a red **CHAIN REVIEW** band while the table replays at speed ("NEAR
    replaying the signed log · tick …/1080"); a **LIE CAUGHT** stamp; a green
-   **VERDICT** bar; "Contract paid 0.24 NEAR to the
+   **VERDICT** bar; "Contract paid 0.28 NEAR to the
    player". Every `tx ↗` link opens the real transaction on
-   testnet.nearblocks.io (match #14).
+   testnet.nearblocks.io (match #0 on the locked contract).
 2. **Play a match.** On the same page, type a name and press Enter.
    You should see: "Created <name>.noref.testnet … with 0.8 NEAR. Its key was
    made in this browser" with a tx link, and your balance top right. No wallet
@@ -101,7 +101,8 @@ node scripts-testnet-pvp.mjs --url=https://noref.63-183-239-145.sslip.io:80 --li
 5. If nobody claims, `refund` returns both stakes 10 minutes after the match
    should have ended.
 
-Contract: `contracts/noref` (deployed at `noref.testnet`). Methods: `create`,
+Contract: `contracts/noref`, deployed at `arena.noref.testnet`, an account with
+no access keys: nobody, including us, can change or remove the code. Methods: `create`,
 `join`, `cancel`, `claim`, `confirm`, `dispute`, `finalize`, `refund`,
 `get_match`, `match_count`.
 
@@ -127,37 +128,51 @@ Every rule is in `app/shared/economy.js`.
 
 ## Verify it yourself
 
-- Contract: https://testnet.nearblocks.io/address/noref.testnet
-- A lie caught by a browser dispute (match #14): claim
-  [GWzy4zSj…](https://testnet.nearblocks.io/txns/GWzy4zSjLHbxSLszRH9dUrbgKMARQ5r76qhzsMfGZBHF),
-  dispute [9EYsrnD5…](https://testnet.nearblocks.io/txns/9EYsrnD5rLJTyzgV83aAuarbSmekHyikd7PAiD9Wncyp)
-  (replay, 18.5 Tgas), payout
-  [4272xoVG…](https://testnet.nearblocks.io/txns/4272xoVGdQZze7StfJAtdpYLqi2hbqwFgnMRPQ2P6mUK)
-- Two people, the loser lies (match #19): false claim
-  [A7Tqis4y…](https://testnet.nearblocks.io/txns/A7Tqis4yVkSarULX6FQ3ABY6baULMhbc39L6Myig8dcR),
-  the winner's dispute
-  [A2sqxkat…](https://testnet.nearblocks.io/txns/A2sqxkatA8mDPa5fA55DrxqmetB5aLsxqgPhgGTzTFVe)
-  (18.5 Tgas), payout
-  [C1agpkxN…](https://testnet.nearblocks.io/txns/C1agpkxN57haVDdvm6DxdC1KPTTqdMPLr7BQaraQFYXF)
-- An NPC-vs-NPC ladder match on the contract (match #13):
-  [2wXVtPKF…](https://testnet.nearblocks.io/txns/2wXVtPKFRBoksBRCFwfPrNRdh2yQv6UZjKwxbH819yNu)
-- NPC accounts: `npc-rook`, `npc-brick`, `npc-moss`, `npc-vex`, `npc-pip`,
-  `npc-dot` `.noref.testnet`
-- The deployed contract is this source: building `contracts/noref` gives the
-  same sha256 as `noref.testnet`'s code hash
-  (`33VXFDrjBSwzzwDxs67mRDXm3mG9QKppvkhTWuXcfT7E`, 207,946 bytes; built with
-  Rust 1.94.1 and cargo-near 0.22.0 on macOS arm64, a non-reproducible build,
-  so another toolchain may differ):
+- **Nobody can change the contract.** It lives at
+  [arena.noref.testnet](https://testnet.nearblocks.io/address/arena.noref.testnet),
+  created, funded, deployed and initialized in a single transaction from the
+  house account
+  ([3jTRD1cC…](https://testnet.nearblocks.io/txns/3jTRD1cCT4gKPw5CGnc3jbQks2kTFKYZPkAFxwRZVgY6))
+  and never given an access key. Check: `view_access_key_list` for
+  `arena.noref.testnet` returns no keys.
+- **The deployed code is this source, rebuilt by anyone.** The contract is
+  built with `cargo near build reproducible-wasm` inside the pinned image
+  `sourcescan/cargo-near:0.22.0-rust-1.99.1` (see `contracts/noref/Cargo.toml`).
+  Two builds give the same bytes, and they equal the deployed code hash
+  `UQVPg3sdWWWkaggDEMXBpFgbwJhs9i7zL3F5YAnDNeS` (199,084 bytes). The contract
+  also reports its own source and build (NEP-330): call the view method
+  `contract_source_metadata` to get the repository, commit `29301ca` and the
+  build command. Needs Docker:
 
   ```
-  cd contracts/noref && cargo near build non-reproducible-wasm --no-abi
-  cd ../../app && node scripts-code-hash.mjs
+  cd contracts/noref && cargo near build reproducible-wasm
+  cd ../../app && node scripts-code-hash.mjs      # MATCH
   ```
+- **A lie caught by a browser dispute** (match #0): Vex's claim
+  [FnBKPJ1u…](https://testnet.nearblocks.io/txns/FnBKPJ1ucUDtVLxYdr9LZ3XFFZTH1b2ghpnNk7mP9fjy),
+  the player's dispute
+  [FKs7AHjn…](https://testnet.nearblocks.io/txns/FKs7AHjnkVnzpyRmkoipr5kn8qzunXfWyHyFfbRH6s5R)
+  (replay, 18.3 Tgas), payout
+  [8666m5XT…](https://testnet.nearblocks.io/txns/8666m5XTzGAFSVnQ9rFwn9RTdF9wmj1ienYfdG6CnPN2)
+- **Two people, the loser lies** (match #1): the host's false claim
+  [4TdT1rHw…](https://testnet.nearblocks.io/txns/4TdT1rHwAJcjh5kbZLcQJCWneJAG1tyUnDW2UBNXkAJL),
+  the guest's dispute
+  [CMCm9LQj…](https://testnet.nearblocks.io/txns/CMCm9LQjzjQQFxLVXY1ZdMSsNzmv8sSKdS9ARogeENKV)
+  (18.3 Tgas), payout
+  [HtFgpprY…](https://testnet.nearblocks.io/txns/HtFgpprYwXACXXrLgt5cvZBGSHDYUZLjwxdNCzXRWEA8)
+- **NPC-vs-NPC ladder match** on the contract (match #2):
+  [8vdgMMNJ…](https://testnet.nearblocks.io/txns/8vdgMMNJyJH4MzGYWE3ySTk2oaSREidWrUZmUaWueEny)
+- NPC accounts: `npc-rook`, `npc-brick`, `npc-moss`, `npc-vex`, `npc-pip`,
+  `npc-dot` `.noref.testnet`; the house is `noref.testnet`.
+- History: matches #0 to #19 of the first deployment ran on `noref.testnet`,
+  whose key we hold. We moved to the key-less `arena.noref.testnet` so the
+  "nobody decides" claim holds for the code too.
 
 ## Run it yourself
 
 Needs Rust 1.94 with the `wasm32-unknown-unknown` target, Node 23.6 or newer,
-and `cargo-near` (only to build the contract). No npm install.
+and `cargo-near` plus Docker (only to build the contract reproducibly). No npm
+install.
 
 ```
 ./scripts/build-engine.sh        # rules crate -> app/web/engine.wasm (a built copy is committed)
@@ -168,7 +183,8 @@ Without `CHAIN=testnet` the app settles on `app/server/chain-local.ts`, a local
 mirror of `contracts/noref` (same checks, same replay code). "Fast-forward a
 week" runs the NPC ladder for simulated days (local build only).
 
-On NEAR testnet (needs the house account key in `.keys/noref.testnet.json`):
+On NEAR testnet (needs the house account key in `.keys/noref.testnet.json`;
+the contract is `arena.noref.testnet`, override with `CONTRACT=` and `HOUSE=`):
 
 ```
 cd app && CHAIN=testnet PORT=8789 DATA=./data/testnet node server/main.ts
@@ -189,7 +205,9 @@ cd app && npm test
 Real, and checkable on testnet.nearblocks.io:
 
 - In the testnet build every stake, claim, confirm, dispute and payout is a
-  transaction on `noref.testnet`; each line of the match record links to it.
+  transaction on `arena.noref.testnet`; each line of the match record links to it.
+- The contract account has no access keys, so its code cannot be changed by
+  anyone, and the code is reproducibly built from this repository.
 - A dispute makes the contract replay the whole match from the input log the
   opponent signed, and pay whoever the replay says won. The server is not
   asked.
@@ -222,7 +240,7 @@ Not claimed:
   accepts 10 seconds to 24 hours.
 - The demo faucet gives each new account 0.8 test NEAR and is rate limited
   (3 new accounts per network and 15 in total per day).
-- The recorded demo (`#demo`) replays match #14's real inputs in the browser;
+- The recorded demo (`#demo`) replays match #0's real inputs in the browser;
   its transactions are real, the animation is a playback.
 
 ## Hackathon scope: prior work and what was built

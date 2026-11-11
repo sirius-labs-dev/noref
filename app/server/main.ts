@@ -4,7 +4,7 @@
 //   node server/main.ts            (Node 23.6+; no npm install needed)
 //   PORT=8787 DATA=./data node server/main.ts
 //   CHAIN=testnet node server/main.ts   (real NoRef contract on NEAR testnet;
-//                                        needs ../.keys/<CONTRACT>.json)
+//                                        needs ../.keys/<HOUSE>.json)
 //
 // API (JSON):
 //   POST /api/login {name, key}                -> account, faucet balance
@@ -42,7 +42,10 @@ const freshLog: { ip: string; t: number }[] = [];
 const DATA = process.env.DATA ?? join(ROOT, "data");
 const CHAIN = process.env.CHAIN ?? "local";
 const TESTNET = CHAIN === "testnet";
-const CONTRACT = process.env.CONTRACT ?? "noref.testnet";
+// the contract lives on a key-less account (nobody can redeploy it); the house
+// account creates and funds player and NPC accounts and owns their names
+const CONTRACT = process.env.CONTRACT ?? "arena.noref.testnet";
+const HOUSE = process.env.HOUSE ?? "noref.testnet";
 const RPC = process.env.RPC ?? "https://rpc.testnet.fastnear.com";
 // the contract allows 10 s minimum; testnet blocks also need a moment
 const WINDOW_SECS = Number(process.env.WINDOW_SECS ?? (TESTNET ? 15 : 8));
@@ -56,7 +59,7 @@ const DIVIDEND_KEEP = Number(process.env.DIVIDEND_KEEP ?? 2000); // ...down to t
 const HOUSE_FLOOR = Number(process.env.HOUSE_FLOOR ?? 3000); // the house keeps this much for new players
 
 const engine = await Engine.load(readFileSync(join(ROOT, "web/engine.wasm")));
-const chain: any = TESTNET ? new TestnetChain({ near: new Near(RPC), contract: CONTRACT, keysDir: new URL("../../.keys/", import.meta.url) }) : new LocalChain(engine);
+const chain: any = TESTNET ? new TestnetChain({ near: new Near(RPC), contract: CONTRACT, house: HOUSE, keysDir: new URL("../../.keys/", import.meta.url) }) : new LocalChain(engine);
 
 // ---- persistent economy ----
 type World = { roster: any[]; feed: { t: number; text: string }[]; players: Record<string, { key: string }>; balances: Record<string, number>; simDays: number; clockOffsetMs?: number };
@@ -214,8 +217,8 @@ if (!TESTNET)
 // ---- testnet economy: the chain is the ledger ----
 /** Bankroll = the NPC account's real balance minus its gas reserve; then open/close, rescue, dividends. */
 async function syncNpcs() {
-  await chain.refreshBalance(CONTRACT);
-  const busy = new Set([...live.values()].map((m: any) => m.npc.id));
+  await chain.refreshBalance(HOUSE);
+  const busy = new Set([...live.values()].filter((m: any) => !m.pvp).map((m: any) => m.npc.id));
   for (const n of world.roster) {
     if (busy.has(n.id)) continue; // its stake is locked in a live match; settle first
     const bal = (await chain.hasAccount(n.id)) ? await chain.refreshBalance(n.id) : 0;
@@ -224,7 +227,7 @@ async function syncNpcs() {
     // sponsor of last resort: after a while closed, the house backs it again
     if (n.status === "retired" && n.closedAt && nowW() - n.closedAt > RESCUE_MS) {
       const amount = eco.REOPEN_AT + 100 - n.bankroll;
-      if (chain.balance(CONTRACT) - amount > HOUSE_FLOOR + 2100) {
+      if (chain.balance(HOUSE) - amount > HOUSE_FLOOR + 2100) { // ~2.1 NEAR on the house stays locked by the first deployment's storage
         const hash = await chain.houseBack(n.id, amount);
         eco.sponsor(n, "house", amount, nowW()).events.forEach((t) => feed(t, nowW(), chain.explorer(hash)));
       }
@@ -235,7 +238,7 @@ async function syncNpcs() {
       let paid = 0;
       let last = "";
       for (const d of plan) {
-        const to = d.who === "house" ? CONTRACT : d.who;
+        const to = d.who === "house" ? HOUSE : d.who;
         try {
           last = await chain.pay(n.id, to, d.amount);
           paid += d.amount;
@@ -675,7 +678,7 @@ async function api(req: any, url: URL): Promise<unknown> {
 }
 
 function chainInfo() {
-  return TESTNET ? { kind: "testnet", contract: CONTRACT, explorer: "https://testnet.nearblocks.io", windowSecs: WINDOW_SECS, ladderMin: Math.round(LADDER_MS / 60_000) } : { kind: "local", windowSecs: WINDOW_SECS };
+  return TESTNET ? { kind: "testnet", contract: CONTRACT, house: HOUSE, explorer: "https://testnet.nearblocks.io", windowSecs: WINDOW_SECS, ladderMin: Math.round(LADDER_MS / 60_000) } : { kind: "local", windowSecs: WINDOW_SECS };
 }
 
 /** Browser -> NEAR RPC relay (read + broadcast only; it cannot alter a signed tx). */

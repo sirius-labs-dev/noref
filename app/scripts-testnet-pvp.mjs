@@ -115,7 +115,7 @@ try {
 } finally {
   for (const s of seats) {
     try {
-      const r = await s.pc.near.send(s.me, s.acct, s.me, [action.deleteAccount(s.login.chain.contract)]);
+      const r = await s.pc.near.send(s.me, s.acct, s.me, [action.deleteAccount(s.login.chain.house ?? s.login.chain.contract)]);
       log(`deleted ${s.me}: ${r.hash}`);
       rmSync(s.keyPath);
     } catch (e) {

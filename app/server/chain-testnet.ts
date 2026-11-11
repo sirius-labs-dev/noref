@@ -19,6 +19,7 @@ export class TestnetChain {
   kind = "testnet";
   near: Near;
   contract: string;
+  house: string;
   keysDir: URL;
   owner: any;
   matches: Record<number, Match> = {};
@@ -32,32 +33,33 @@ export class TestnetChain {
   private inflight = new Set<number>();
   private polling = false;
 
-  constructor(o: { near?: Near; contract: string; keysDir: URL }) {
+  constructor(o: { near?: Near; contract: string; house?: string; keysDir: URL }) {
     this.near = o.near ?? new Near();
     this.contract = o.contract;
+    this.house = o.house ?? o.contract; // creates and funds accounts; the contract itself may be key-less
     this.keysDir = o.keysDir;
   }
 
   async init(npcIds: string[]) {
     npcIds.forEach((i) => this.npcIds.add(i));
-    this.owner = await this.loadKey(this.contract);
-    if (!this.owner) throw new Error(`no key for ${this.contract} in .keys/`);
-    await this.refreshBalance(this.contract);
+    this.owner = await this.loadKey(this.house);
+    if (!this.owner) throw new Error(`no key for ${this.house} in .keys/`);
+    await this.refreshBalance(this.house);
     setInterval(() => this.pollAll().catch((e) => console.error("poll:", e.message)), 1500);
   }
 
   // ---- accounts ----
   /** logical id (NPC id or player account) -> chain account */
   acct(who: string) {
-    return this.npcIds.has(who) ? `npc-${who}.${this.contract}` : who;
+    return this.npcIds.has(who) ? `npc-${who}.${this.house}` : who;
   }
   logical(account: string | null) {
     if (!account) return null;
-    const m = account.match(new RegExp(`^npc-([a-z0-9]+)\\.${this.contract.replace(/\./g, "\\.")}$`));
+    const m = account.match(new RegExp(`^npc-([a-z0-9]+)\\.${this.house.replace(/\./g, "\\.")}$`));
     return m && this.npcIds.has(m[1]) ? m[1] : account;
   }
   playerAccount(name: string) {
-    return `${name}.${this.contract}`;
+    return `${name}.${this.house}`;
   }
   explorer(hash: string) {
     return this.near.explorer(hash);
@@ -99,9 +101,9 @@ export class TestnetChain {
       await this.refreshBalance(id);
       return { id, fresh: false };
     }
-    const r = await this.near.send(this.contract, this.owner, id, [action.createAccount(), action.transfer(milliToYocto(fundMilli)), action.addFullKey(publicKey)]);
+    const r = await this.near.send(this.house, this.owner, id, [action.createAccount(), action.transfer(milliToYocto(fundMilli)), action.addFullKey(publicKey)]);
     await this.refreshBalance(id);
-    this.refreshBalance(this.contract).catch(() => {});
+    this.refreshBalance(this.house).catch(() => {});
     return { id, fresh: true, hash: r.hash };
   }
 
@@ -115,14 +117,14 @@ export class TestnetChain {
       k = await newKey();
       writeFileSync(this.keyFile(id), JSON.stringify({ account_id: id, public_key: k.publicKey, private_key: k.secretKey }), { mode: 0o600 });
       this.keys.set(id, k);
-      await this.near.send(this.contract, this.owner, id, [action.createAccount(), action.transfer(milliToYocto(needMilli + reserve + 200)), action.addFullKey(k.publicKey)]);
+      await this.near.send(this.house, this.owner, id, [action.createAccount(), action.transfer(milliToYocto(needMilli + reserve + 200)), action.addFullKey(k.publicKey)]);
     } else {
       if (!k) throw new Error(`no key for ${id}`);
       const have = yoctoToMilli(a.amount);
-      if (have < needMilli + reserve) await this.near.send(this.contract, this.owner, id, [action.transfer(milliToYocto(needMilli + reserve + 200 - have))]);
+      if (have < needMilli + reserve) await this.near.send(this.house, this.owner, id, [action.transfer(milliToYocto(needMilli + reserve + 200 - have))]);
     }
     await this.refreshBalance(id);
-    this.refreshBalance(this.contract).catch(() => {});
+    this.refreshBalance(this.house).catch(() => {});
     return id;
   }
 
@@ -144,9 +146,9 @@ export class TestnetChain {
 
   /** The house backs an NPC with a real transfer (sponsor of last resort). */
   async houseBack(npcId: string, milli: number) {
-    const r = await this.near.send(this.contract, this.owner, this.acct(npcId), [action.transfer(milliToYocto(milli))]);
+    const r = await this.near.send(this.house, this.owner, this.acct(npcId), [action.transfer(milliToYocto(milli))]);
     this.refreshBalance(npcId).catch(() => {});
-    this.refreshBalance(this.contract).catch(() => {});
+    this.refreshBalance(this.house).catch(() => {});
     return r.hash;
   }
 
@@ -241,7 +243,7 @@ export class TestnetChain {
     this.inflight.add(id);
     let r;
     try {
-      r = await this.near.send(this.contract, this.owner, this.contract, [action.call("finalize", { id: String(id) }, 30n * TGAS)]);
+      r = await this.near.send(this.house, this.owner, this.contract, [action.call("finalize", { id: String(id) }, 30n * TGAS)]);
     } finally {
       this.inflight.delete(id);
     }
