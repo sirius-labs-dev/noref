@@ -690,8 +690,23 @@ async function rpcProxy(req: any, res: any) {
   res.end(await r.text());
 }
 
+// The web client may also be served from Vercel (static only); it then calls
+// this server's /api cross-origin. No cookies are used, so this only decides
+// which pages may talk to the API from a browser.
+const CORS = new RegExp(process.env.CORS_ORIGIN ?? "^https://noref(-[a-z0-9-]+)?\\.vercel\\.app$");
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
+  const origin = String(req.headers.origin ?? "");
+  if (origin && CORS.test(origin) && url.pathname.startsWith("/api/")) {
+    res.setHeader("access-control-allow-origin", origin);
+    res.setHeader("vary", "origin");
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, { "access-control-allow-methods": "GET, POST", "access-control-allow-headers": "content-type", "access-control-max-age": "86400" });
+      res.end();
+      return;
+    }
+  }
   try {
     if (url.pathname === "/api/events") {
       const me = url.searchParams.get("me") ?? "anon";

@@ -12,13 +12,17 @@ accounts with their own bankrolls, prices and sponsors.
 Built for the NEAR Hackathon (Nov 2026), games track ("Games With Real
 Economies").
 
-**Hosted demo:** https://noref.63-183-239-145.sslip.io:80/ (NEAR testnet; HTTPS
-is served on port 80, so the `:80` is part of the link).
+**Hosted demo:** https://noref.vercel.app/ (NEAR testnet). Vercel serves only
+the static page; the game server (matches, live events, NPCs, the RPC relay)
+runs on a VPS and the page talks to it directly. The same build is also served
+by that server itself at https://noref.63-183-239-145.sslip.io:80/ (HTTPS on
+port 80, so the `:80` is part of the link) if `vercel.app` is unreachable from
+your network.
 
 ## Try it (about 3 minutes, no wallet, no install)
 
 1. **Watch a lie get caught.** Open
-   https://noref.63-183-239-145.sslip.io:80/#demo. A recorded real match plays
+   https://noref.vercel.app/#demo. A recorded real match plays
    by itself (about 40 s).
    You should see: six rounds, each with "NPC signature ✓"; Vex claiming it
    won; a red **CHAIN REVIEW** band while the table replays at speed ("NEAR

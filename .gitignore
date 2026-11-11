@@ -2,3 +2,6 @@ target/
 /app/data/
 /.keys/
 .DS_Store
+/app/dist-vercel/
+/app/.vercel/
+.vercel

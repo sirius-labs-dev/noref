@@ -52,8 +52,11 @@ const store = {
 const fx = new Fx();
 
 // ---------- api ----------
+// Same origin when the game server serves this page; a static copy on Vercel
+// talks to the game server on the VPS instead (see vercel.json).
+const API = location.hostname.endsWith(".vercel.app") ? "https://noref.63-183-239-145.sslip.io:80" : "";
 async function api(path, body) {
-  const r = await fetch(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {});
+  const r = await fetch(API + path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {});
   const j = await r.json();
   if (j.error) throw new Error(j.error);
   return j;
@@ -83,7 +86,7 @@ async function login(name) {
   const r = await api("/api/login", { name, key: key.pubHex, account: acct?.publicKey });
   me = r.me;
   if (testnet()) {
-    pc = new PlayerChain({ rpc: "/api/rpc", contract: chainInfo.contract, accountId: me, key: acct, api, log: (kind, text, res) => note("tx", text, res.hash) });
+    pc = new PlayerChain({ rpc: API + "/api/rpc", contract: chainInfo.contract, accountId: me, key: acct, api, log: (kind, text, res) => note("tx", text, res.hash) });
     if (r.fresh) note("chain", `Created ${me} on NEAR testnet with ${fmt(r.balance)}. Its key was made in this browser and never leaves it.`, r.tx);
   }
   localStorage.setItem("noref-me", me);
@@ -116,7 +119,7 @@ document.addEventListener("pointerdown", () => sound.unlock(), { once: true });
 // ---------- events ----------
 function connect() {
   es?.close();
-  es = new EventSource(`/api/events?me=${encodeURIComponent(me)}`);
+  es = new EventSource(`${API}/api/events?me=${encodeURIComponent(me)}`);
   es.addEventListener("pvp_start", (ev) => onPvpStart(JSON.parse(ev.data)).catch((e) => note("problem", e.message)));
   for (const k of ["round", "committed", "reveal", "round_result", "final", "chain", "note", "oppsig"]) {
     es.addEventListener(k, (ev) => onMatchEvent(k, JSON.parse(ev.data)));
