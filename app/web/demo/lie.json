@@ -1,0 +1,152 @@
+{
+ "recordedAt": "2026-11-11T01:05:12.481Z",
+ "contract": "noref.testnet",
+ "match": 14,
+ "player": "e2ef1u8w.noref.testnet",
+ "npc": {
+  "id": "vex",
+  "name": "Vex",
+  "style": "bully"
+ },
+ "stake": 120,
+ "rounds": 6,
+ "roundTicks": 180,
+ "duration": 1080,
+ "liar": true,
+ "verdict": 1,
+ "records": [
+  {
+   "tick": 0,
+   "entries": [
+    {
+     "ball": 0,
+     "dvx": "42360476090",
+     "dvy": "24456832273"
+    },
+    {
+     "ball": 1,
+     "dvx": "-51350293991",
+     "dvy": "-3764099842"
+    }
+   ]
+  },
+  {
+   "tick": 180,
+   "entries": [
+    {
+     "ball": 0,
+     "dvx": "51488067944",
+     "dvy": "0"
+    },
+    {
+     "ball": 1,
+     "dvx": "-5198018730",
+     "dvy": "46671574194"
+    }
+   ]
+  },
+  {
+   "tick": 360,
+   "entries": [
+    {
+     "ball": 1,
+     "dvx": "46621099759",
+     "dvy": "-21851640620"
+    }
+   ]
+  },
+  {
+   "tick": 540,
+   "entries": [
+    {
+     "ball": 0,
+     "dvx": "-14781302707",
+     "dvy": "-4483859155"
+    },
+    {
+     "ball": 1,
+     "dvx": "-45923588159",
+     "dvy": "7420625642"
+    }
+   ]
+  },
+  {
+   "tick": 720,
+   "entries": [
+    {
+     "ball": 0,
+     "dvx": "30876300352",
+     "dvy": "-1010785415"
+    },
+    {
+     "ball": 1,
+     "dvx": "-5792835239",
+     "dvy": "47972168455"
+    }
+   ]
+  },
+  {
+   "tick": 900,
+   "entries": [
+    {
+     "ball": 0,
+     "dvx": "-38616050958",
+     "dvy": "0"
+    },
+    {
+     "ball": 1,
+     "dvx": "-46474284827",
+     "dvy": "-22162174768"
+    }
+   ]
+  }
+ ],
+ "events": [
+  {
+   "kind": "create",
+   "text": "e2ef1u8w.noref.testnet opened match #14 on noref.testnet and locked 0.12 NEAR",
+   "tx": "D8PEZMfnFhzNanfj8mCGdMv1636HcVr8risyXXGokRYa",
+   "data": null
+  },
+  {
+   "kind": "join",
+   "text": "vex joined and locked 0.12 NEAR. Pot on-chain: 0.24 NEAR",
+   "tx": "FfRtiiAcjzGXyfqUGmYiJt3P4kiwkrg2ntKz2fMRv18L",
+   "data": null
+  },
+  {
+   "kind": "claim",
+   "text": "vex claims: vex won. Dispute window 15s",
+   "tx": "GWzy4zSjLHbxSLszRH9dUrbgKMARQ5r76qhzsMfGZBHF",
+   "data": {
+    "winner": 2,
+    "by": "vex"
+   }
+  },
+  {
+   "kind": "replay",
+   "text": "e2ef1u8w.noref.testnet disputed. The contract replayed all 1080 ticks on NEAR (18.5 Tgas): e2ef1u8w.noref.testnet won. The claim was false.",
+   "tx": "9EYsrnD5rLJTyzgV83aAuarbSmekHyikd7PAiD9Wncyp",
+   "data": {
+    "winner": 1,
+    "overturned": true,
+    "finalRoot": "138dd5c9dc47a4c8bd681ff2ed8fa10c5585a643f62d6b1d38b1c57386c15a01",
+    "signedTick": 1079
+   }
+  },
+  {
+   "kind": "finalize",
+   "text": "Dispute window closed; anyone may finalize",
+   "tx": "4272xoVGdQZze7StfJAtdpYLqi2hbqwFgnMRPQ2P6mUK",
+   "data": null
+  },
+  {
+   "kind": "settle",
+   "text": "Contract paid 0.24 NEAR to e2ef1u8w.noref.testnet",
+   "tx": "4272xoVGdQZze7StfJAtdpYLqi2hbqwFgnMRPQ2P6mUK",
+   "data": {
+    "winner": 1
+   }
+  }
+ ]
+}

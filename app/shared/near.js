@@ -221,6 +221,20 @@ export class Near {
   }
 
   async _send(signerId, key, receiverId, actions) {
+    // a lagging RPC node can hand out a stale block hash or nonce; those txs are
+    // rejected before execution, so building and sending again is safe
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this._sendOnce(signerId, key, receiverId, actions);
+      } catch (e) {
+        if (attempt >= 2 || !/"Expired"|InvalidNonce/.test(e.message)) throw e;
+        this.nonces.delete(signerId + key.publicKey);
+        await new Promise((ok) => setTimeout(ok, 1200));
+      }
+    }
+  }
+
+  async _sendOnce(signerId, key, receiverId, actions) {
     const qk = signerId + key.publicKey;
     let ak;
     for (let i = 0; ; i++) {

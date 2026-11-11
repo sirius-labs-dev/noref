@@ -126,13 +126,58 @@ export class TestnetChain {
     return id;
   }
 
-  /** NPC pays a player out of its own account (sponsorship cash-out). */
+  /** NPC pays someone out of its own account (cash-out, dividends). Never topped up by the house. */
   async pay(npcId: string, to: string, milli: number) {
-    await this.ensureNpc(npcId, milli);
+    const id = this.acct(npcId);
+    await this.loadKey(id);
+    if ((await this.refreshBalance(npcId)) < milli + 100) throw new Error(`${id} cannot cover ${milli / 1000} NEAR`);
     const r = await this.near.send(this.acct(npcId), this.keys.get(this.acct(npcId)), to, [action.transfer(milliToYocto(milli))]);
     this.refreshBalance(to).catch(() => {});
     this.refreshBalance(npcId).catch(() => {});
     return r.hash;
+  }
+
+  /** Does the NPC have a chain account yet? */
+  async hasAccount(npcId: string) {
+    return !!(await this.near.account(this.acct(npcId)));
+  }
+
+  /** The house backs an NPC with a real transfer (sponsor of last resort). */
+  async houseBack(npcId: string, milli: number) {
+    const r = await this.near.send(this.contract, this.owner, this.acct(npcId), [action.transfer(milliToYocto(milli))]);
+    this.refreshBalance(npcId).catch(() => {});
+    this.refreshBalance(this.contract).catch(() => {});
+    return r.hash;
+  }
+
+  /**
+   * NPC vs NPC ladder match, played for real on the contract: A creates and
+   * stakes, B joins with the same stake, A claims the result both servers
+   * computed, B confirms, and the contract pays the pot. Both NPCs are ours,
+   * so nothing here is disputed; the money still moves on-chain.
+   */
+  async ladderMatch(aId: string, bId: string, stakeMilli: number, winner: number, duration: number) {
+    const A = this.acct(aId);
+    const B = this.acct(bId);
+    const ka = await this.loadKey(A);
+    const kb = await this.loadKey(B);
+    if (!ka || !kb) throw new Error("missing NPC key");
+    const sk = () => Array.from(globalThis.crypto.getRandomValues(new Uint8Array(32)), (x) => x.toString(16).padStart(2, "0")).join("");
+    const dep = milliToYocto(stakeMilli);
+    const call = (who: string, key: any, method: string, args: any, deposit = 0n) => this.near.send(who, key, this.contract, [action.call(method, args, 30n * TGAS, deposit)]);
+    const c = await call(A, ka, "create", { duration, session_key: sk(), window_secs: 10, opponent: B }, dep);
+    const id = Number(c.result);
+    try {
+      await call(B, kb, "join", { id: String(id), session_key: sk() }, dep);
+    } catch (e) {
+      await call(A, ka, "cancel", { id: String(id) }).catch(() => {});
+      throw e;
+    }
+    await call(A, ka, "claim", { id: String(id), winner });
+    const f = await call(B, kb, "confirm", { id: String(id) });
+    this.refreshBalance(aId).catch(() => {});
+    this.refreshBalance(bId).catch(() => {});
+    return { id, create: c.hash, settle: f.hash };
   }
 
   /** Check a transfer the player signed in the browser. */

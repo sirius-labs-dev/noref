@@ -129,3 +129,8 @@ canvas#table { box-shadow: 0 1px 0 rgba(255,255,255,0.4) inset, 0 12px 40px -12p
 .record a.tx, .chainbadge a { font: 11.5px var(--mono); color: var(--muted); text-decoration: underline dotted; text-underline-offset: 3px; }
 .record li.tx { color: var(--muted); }
 .account a { text-decoration: none; }
+
+.card.demo { border-color: color-mix(in srgb, var(--a) 45%, var(--line)); background: color-mix(in srgb, var(--a) 7%, var(--card)); }
+.card.demo p { margin: 4px 0 10px; }
+.card.demo button { background: var(--a); color: #fff; }
+.record li.demo { font-weight: 600; }

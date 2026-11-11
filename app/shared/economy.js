@@ -7,12 +7,15 @@
 // - PRICE: an NPC asks a stake per match that rises with its rating and with
 //   recent demand, and never risks more than a tenth of its bankroll.
 // - UPKEEP: every match costs the NPC a small training fee, so an NPC that
-//   keeps losing slowly goes broke.
+//   keeps losing slowly goes broke. (On testnet the real gas is the upkeep.)
 // - SPONSORS: anyone can back an NPC by buying shares of its bankroll. Wins
 //   raise the share value, losses lower it; sponsors can cash out any time.
 // - BANKRUPTCY: when a tenth of the bankroll no longer covers the minimum
 //   stake, the NPC closes its doors. It reopens only when
 //   sponsors bring its bankroll back up.
+// - DIVIDENDS: an NPC whose bankroll grows past a ceiling pays the excess out
+//   to its backers, pro rata to their shares. Money keeps circulating instead
+//   of piling up in the best fighter.
 //
 // Amounts are integer milliNEAR (1 NEAR = 1000) to keep the math exact.
 
@@ -71,6 +74,7 @@ export function sponsor(npc, who, amount, now = Date.now()) {
   const events = [`${who} backed ${npc.name} with ${fmt(amount)} (${minted.toFixed(3)} shares)`];
   if (npc.status === "retired" && npc.bankroll >= REOPEN_AT) {
     npc.status = "open";
+    delete npc.closedAt;
     events.push(`${npc.name} reopened: sponsors brought the bankroll to ${fmt(npc.bankroll)}`);
   }
   return { minted, events };
@@ -94,6 +98,7 @@ export function cashOut(npc, who, shares, now = Date.now()) {
 function checkBankrupt(npc) {
   if (npc.status === "open" && npc.bankroll < BROKE_BELOW) {
     npc.status = "retired";
+    npc.closedAt = Date.now();
     return [`${npc.name} went broke (${fmt(npc.bankroll)}) and closed its doors until someone invests`];
   }
   return [];
@@ -107,9 +112,9 @@ function expected(ra, rb) {
  * Apply a settled match to an NPC. `delta` is what the NPC won (+stake) or
  * lost (-stake); score is 1 win, 0.5 draw, 0 loss vs an opponent rating.
  */
-export function recordResult(npc, { delta, score, oppRating, now = Date.now() }) {
-  npc.bankroll += delta - UPKEEP;
-  npc.upkeepPaid = (npc.upkeepPaid ?? 0) + UPKEEP;
+export function recordResult(npc, { delta, score, oppRating, now = Date.now(), upkeep = UPKEEP }) {
+  npc.bankroll += delta - upkeep;
+  npc.upkeepPaid = (npc.upkeepPaid ?? 0) + upkeep;
   npc.rating += ELO_K * (score - expected(npc.rating, oppRating));
   if (score === 1) npc.wins++;
   else if (score === 0) npc.losses++;
@@ -117,6 +122,34 @@ export function recordResult(npc, { delta, score, oppRating, now = Date.now() })
   npc.history.push({ t: now, bankroll: npc.bankroll, rating: Math.round(npc.rating) });
   if (npc.history.length > 2000) npc.history.splice(0, npc.history.length - 2000);
   return checkBankrupt(npc);
+}
+
+/** Open/close an NPC after its bankroll changed outside a match (e.g. synced from chain). */
+export function updateStatus(npc, now = Date.now()) {
+  if (npc.status === "open" && npc.bankroll < BROKE_BELOW) {
+    npc.status = "retired";
+    npc.closedAt = now;
+    return [`${npc.name} went broke (${fmt(npc.bankroll)}) and closed its doors until someone invests`];
+  }
+  if (npc.status === "retired" && npc.bankroll >= REOPEN_AT) {
+    npc.status = "open";
+    delete npc.closedAt;
+    return [`${npc.name} reopened with a bankroll of ${fmt(npc.bankroll)}`];
+  }
+  if (npc.status === "retired" && !npc.closedAt) npc.closedAt = now;
+  return [];
+}
+
+/**
+ * Split `amount` milliNEAR of dividends between an NPC's backers, pro rata to
+ * their shares. Shares are not burned, so each share is simply worth less.
+ */
+export function dividendPlan(npc, amount) {
+  const total = Object.values(npc.holders).reduce((a, b) => a + b, 0);
+  if (!(total > 0) || !(amount > 0)) return [];
+  return Object.entries(npc.holders)
+    .map(([who, sh]) => ({ who, amount: Math.floor((amount * sh) / total) }))
+    .filter((x) => x.amount >= 1);
 }
 
 export function noteChallenge(npc, now = Date.now()) {

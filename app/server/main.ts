@@ -47,7 +47,13 @@ const RPC = process.env.RPC ?? "https://rpc.testnet.fastnear.com";
 // the contract allows 10 s minimum; testnet blocks also need a moment
 const WINDOW_SECS = Number(process.env.WINDOW_SECS ?? (TESTNET ? 15 : 8));
 const FAUCET = TESTNET ? Number(process.env.PLAYER_FUND ?? 800) : 20 * eco.MILLI;
-const LADDER_MS = Number(process.env.LADDER_MS ?? 25_000);
+const LADDER_MS = Number(process.env.LADDER_MS ?? (TESTNET ? 15 * 60_000 : 25_000));
+// testnet economy: NPC bankrolls are their real chain balances
+const NPC_RESERVE = 300; // milliNEAR kept in each NPC account for gas and storage
+const RESCUE_MS = Number(process.env.RESCUE_MS ?? 2 * 3600_000); // closed this long -> the house backs it again
+const DIVIDEND_AT = Number(process.env.DIVIDEND_AT ?? 3000); // bankroll above this pays dividends...
+const DIVIDEND_KEEP = Number(process.env.DIVIDEND_KEEP ?? 2000); // ...down to this
+const HOUSE_FLOOR = Number(process.env.HOUSE_FLOOR ?? 3000); // the house keeps this much for new players
 
 const engine = await Engine.load(readFileSync(join(ROOT, "web/engine.wasm")));
 const chain: any = TESTNET ? new TestnetChain({ near: new Near(RPC), contract: CONTRACT, keysDir: new URL("../../.keys/", import.meta.url) }) : new LocalChain(engine);
@@ -72,10 +78,11 @@ const npcById = (id: string) => world.roster.find((n) => n.id === id);
 /** World clock: real time plus whatever fast-forward has skipped ahead. */
 const nowW = () => Date.now() + (world.clockOffsetMs ?? 0);
 
-function feed(text: string, t = nowW()) {
-  world.feed.push({ t, text });
+function feed(text: string, t = nowW(), url?: string) {
+  const f: any = url ? { t, text, url } : { t, text };
+  world.feed.push(f);
   if (world.feed.length > 300) world.feed.splice(0, world.feed.length - 300);
-  broadcast("feed", { t, text });
+  broadcast("feed", f);
   persist();
 }
 
@@ -116,7 +123,7 @@ function onSettled(id: number) {
   if (!TESTNET) chain.balances.set(npc.id, 0);
   const score = m.result === SIDE.DRAW ? 0.5 : m.result === npcSide ? 1 : 0;
   npc.bankroll += esc.stake; // un-escrow, then book the result
-  const events = eco.recordResult(npc, { delta: payout - esc.stake, score, oppRating: 1200, now: nowW() });
+  const events = eco.recordResult(npc, { delta: payout - esc.stake, score, oppRating: 1200, now: nowW(), upkeep: TESTNET ? 0 : eco.UPKEEP });
   const human = m.a === npc.id ? m.b : m.a;
   const replayNote = m.replayed ? (m.replayed.winner !== m.claim?.winner ? " after a replay overturned a false claim" : " after a replay confirmed the claim") : "";
   feed(`${human} vs ${npc.name}: ${m.result === SIDE.DRAW ? "draw" : score === 1 ? npc.name + " won" : human + " won"} ${eco.fmt(2 * m.stake)} pot${replayNote}`);
@@ -133,7 +140,7 @@ setInterval(() => {
 }, 500);
 
 // ---- NPC vs NPC ladder (also used by fast-forward) ----
-function simulateNpcMatch(a: any, b: any, rng: () => number, now: number) {
+function simulateNpcMatch(a: any, b: any, rng: () => number, now: number, book = true) {
   const pa = eco.askStake(a, now).stake;
   const pb = eco.askStake(b, now).stake;
   const stake = Math.min(pa, pb);
@@ -160,9 +167,12 @@ function simulateNpcMatch(a: any, b: any, rng: () => number, now: number) {
   const sa = winner === SIDE.DRAW ? 0.5 : winner === SIDE.FIRST ? 1 : 0;
   const ra = a.rating;
   const rb = b.rating;
+  // on testnet (book = false) the money moves on-chain; only ratings and records change here
+  const k = book ? 1 : 0;
+  const up = book ? eco.UPKEEP : 0;
   const ev = [
-    ...eco.recordResult(a, { delta: sa === 1 ? stake : sa === 0 ? -stake : 0, score: sa, oppRating: rb, now }),
-    ...eco.recordResult(b, { delta: sa === 0 ? stake : sa === 1 ? -stake : 0, score: 1 - sa, oppRating: ra, now }),
+    ...eco.recordResult(a, { delta: k * (sa === 1 ? stake : sa === 0 ? -stake : 0), score: sa, oppRating: rb, now, upkeep: up }),
+    ...eco.recordResult(b, { delta: k * (sa === 0 ? stake : sa === 1 ? -stake : 0), score: 1 - sa, oppRating: ra, now, upkeep: up }),
   ];
   return { winner, stake, events: ev };
 }
@@ -182,10 +192,85 @@ function ladderOnce(rng: () => number, now: number, quiet = false) {
 }
 
 const ladderRng = makeRng(Date.now() & 0xffffffff);
-setInterval(() => {
-  if (live.size === 0) ladderOnce(ladderRng, nowW());
+if (!TESTNET)
+  setInterval(() => {
+    if (live.size === 0) ladderOnce(ladderRng, nowW());
+    persist();
+  }, LADDER_MS);
+
+// ---- testnet economy: the chain is the ledger ----
+/** Bankroll = the NPC account's real balance minus its gas reserve; then open/close, rescue, dividends. */
+async function syncNpcs() {
+  await chain.refreshBalance(CONTRACT);
+  const busy = new Set([...live.values()].map((m: any) => m.npc.id));
+  for (const n of world.roster) {
+    if (busy.has(n.id)) continue; // its stake is locked in a live match; settle first
+    const bal = (await chain.hasAccount(n.id)) ? await chain.refreshBalance(n.id) : 0;
+    n.bankroll = Math.max(0, bal - NPC_RESERVE);
+    eco.updateStatus(n, nowW()).forEach((t) => feed(t));
+    // sponsor of last resort: after a while closed, the house backs it again
+    if (n.status === "retired" && n.closedAt && nowW() - n.closedAt > RESCUE_MS) {
+      const amount = eco.REOPEN_AT + 100 - n.bankroll;
+      if (chain.balance(CONTRACT) - amount > HOUSE_FLOOR + 2100) {
+        const hash = await chain.houseBack(n.id, amount);
+        eco.sponsor(n, "house", amount, nowW()).events.forEach((t) => feed(t, nowW(), chain.explorer(hash)));
+      }
+    }
+    // dividends: a fighter that grows too rich pays its backers
+    if (n.bankroll > DIVIDEND_AT) {
+      const plan = eco.dividendPlan(n, n.bankroll - DIVIDEND_KEEP);
+      let paid = 0;
+      let last = "";
+      for (const d of plan) {
+        const to = d.who === "house" ? CONTRACT : d.who;
+        try {
+          last = await chain.pay(n.id, to, d.amount);
+          paid += d.amount;
+        } catch (e: any) {
+          console.error(`dividend ${n.id} -> ${to}:`, e.message);
+        }
+      }
+      if (paid) {
+        n.bankroll -= paid;
+        feed(`${n.name} paid ${eco.fmt(paid)} in dividends to its ${plan.length} backer(s)`, nowW(), last ? chain.explorer(last) : undefined);
+      }
+    }
+  }
   persist();
-}, LADDER_MS);
+}
+
+let ladderBusy = false;
+async function ladderOnchain() {
+  if (ladderBusy || live.size > 0) return;
+  ladderBusy = true;
+  try {
+    await syncNpcs();
+    const open = world.roster.filter((n) => eco.isOpen(n));
+    if (open.length < 2) return;
+    const i = Math.floor(ladderRng() * open.length);
+    let j = Math.floor(ladderRng() * (open.length - 1));
+    if (j >= i) j++;
+    const [a, b] = [open[i], open[j]];
+    const now = nowW();
+    eco.noteChallenge(a, now);
+    const r = simulateNpcMatch(a, b, ladderRng, now, false);
+    if (!r) return;
+    const tx = await chain.ladderMatch(a.id, b.id, r.stake, r.winner, engine.MATCH_TICKS);
+    const who = r.winner === SIDE.DRAW ? "draw" : (r.winner === SIDE.FIRST ? a.name : b.name) + " won";
+    feed(`Ladder match #${tx.id} on-chain: ${a.name} vs ${b.name} for ${eco.fmt(2 * r.stake)}: ${who}`, now, chain.explorer(tx.settle));
+    r.events.forEach((t) => feed(t, now));
+    await syncNpcs();
+  } catch (e: any) {
+    console.error("ladder:", e.message);
+  } finally {
+    ladderBusy = false;
+  }
+}
+if (TESTNET) {
+  setTimeout(() => syncNpcs().catch((e) => console.error("sync:", e.message)), 3000);
+  setInterval(() => syncNpcs().catch((e) => console.error("sync:", e.message)), 60_000);
+  setInterval(() => ladderOnchain(), LADDER_MS);
+}
 
 // ---- views ----
 /** Evenly thin a series to at most `max` points, always keeping the last. */
@@ -442,6 +527,7 @@ async function api(req: any, url: URL): Promise<unknown> {
   }
 
   if (p === "/api/fastforward") {
+    need(!TESTNET, "fast-forward runs in the local build only: on testnet the ladder plays real matches on-chain");
     const days = Math.min(14, Math.max(1, Number(q.days ?? 7)));
     need(live.size === 0, "wait until live matches finish");
     const perDay = 24; // one ladder match per simulated hour
@@ -467,7 +553,7 @@ async function api(req: any, url: URL): Promise<unknown> {
 }
 
 function chainInfo() {
-  return TESTNET ? { kind: "testnet", contract: CONTRACT, explorer: "https://testnet.nearblocks.io", windowSecs: WINDOW_SECS } : { kind: "local", windowSecs: WINDOW_SECS };
+  return TESTNET ? { kind: "testnet", contract: CONTRACT, explorer: "https://testnet.nearblocks.io", windowSecs: WINDOW_SECS, ladderMin: Math.round(LADDER_MS / 60_000) } : { kind: "local", windowSecs: WINDOW_SECS };
 }
 
 /** Browser -> NEAR RPC relay (read + broadcast only; it cannot alter a signed tx). */

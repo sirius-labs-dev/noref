@@ -37,3 +37,25 @@ test("shares track the bankroll", () => {
   const { amount } = eco.cashOut(n, "bob", minted);
   assert.ok(amount > 1000, "a winning NPC pays its sponsors back more");
 });
+
+test("dividends split pro rata between backers", () => {
+  const n = eco.startingRoster().find((x) => x.id === "rook");
+  eco.sponsor(n, "alice", 2000, 0); // house 8000 shares at 1.0, alice buys 2000
+  const plan = eco.dividendPlan(n, 1000);
+  const by = Object.fromEntries(plan.map((p) => [p.who, p.amount]));
+  assert.equal(by.house, 800);
+  assert.equal(by.alice, 200);
+  assert.deepEqual(eco.dividendPlan(n, 0), []);
+});
+
+test("a chain-synced bankroll closes and reopens a fighter", () => {
+  const n = eco.startingRoster().find((x) => x.id === "dot");
+  n.bankroll = eco.BROKE_BELOW - 1;
+  assert.match(eco.updateStatus(n, 5)[0], /went broke/);
+  assert.equal(n.status, "retired");
+  assert.equal(n.closedAt, 5);
+  n.bankroll = eco.REOPEN_AT;
+  assert.match(eco.updateStatus(n, 9)[0], /reopened/);
+  assert.equal(n.status, "open");
+  assert.equal(n.closedAt, undefined);
+});

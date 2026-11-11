@@ -4,6 +4,7 @@
 //
 //   node scripts-testnet-e2e.mjs [npc] [--liar] [--human-lies]
 //   --url=https://host  play against an already running server instead of spawning one
+//   --record=file.json  save the match (input log, chain events, tx hashes) for the web demo
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,6 +19,7 @@ const args = process.argv.slice(2);
 const npc = args.find((a) => !a.startsWith("--")) ?? "dot";
 const liar = args.includes("--liar");
 const humanLies = args.includes("--human-lies");
+const RECORD = args.find((a) => a.startsWith("--record="))?.slice(9);
 const URL_ARG = args.find((a) => a.startsWith("--url="))?.slice(6).replace(/\/$/, "");
 const PORT = 18900 + Math.floor(Math.random() * 90);
 const BASE = URL_ARG ?? `http://127.0.0.1:${PORT}`;
@@ -82,9 +84,11 @@ try {
 
   let client;
   const pending = [];
+  const chainEvents = [];
   const done = new Promise((ok) => {
     listen(me, (k, d) => {
       if (k === "chain") log(`[chain] ${d.text}${d.url ? "  " + d.url : ""}`);
+      if (k === "chain") chainEvents.push({ kind: d.kind, text: d.text, tx: d.tx ?? null, data: d.data ?? null });
       if (k === "chain" && d.kind === "settle") setTimeout(() => ok(d), 500);
       client ? client.handle(k, d) : pending.push([k, d]);
     });
@@ -121,6 +125,11 @@ try {
     }, 300);
   }
   const settle = await done;
+  if (RECORD) {
+    const rec = { recordedAt: new Date().toISOString(), contract: login.chain.contract, match: match.id, player: me, npc: match.npc, stake: ch.stake, rounds: match.rounds, roundTicks: match.roundTicks, duration: match.duration, liar, verdict: client.verdict, records: client.records, events: chainEvents };
+    writeFileSync(RECORD, JSON.stringify(rec, (_, v) => (typeof v === "bigint" ? v.toString() : v), 1));
+    log(`recorded match #${match.id} to ${RECORD}`);
+  }
   const m = (await api(`/api/state?me=${me}`)).me;
   log(`settled: winner side ${settle.data.winner}, our replay said ${client.verdict}; problems: ${client.problems.length}; player balance ${m.balance / 1000} NEAR`);
   if (client.problems.length) console.log(client.problems);

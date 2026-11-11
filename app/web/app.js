@@ -247,7 +247,7 @@ function onClientLog(kind, text, data) {
     detectHits(before, after);
     anim = { bytes: engine.getState(), tick: data.tick + 1, end: data.tick + client.R, acc: 0 };
     setStatus("Round playing out…");
-    note("check", `Round ${data.tick / client.R + 1}: NPC reveal matches its commit ✓ · NPC signature ✓ · you countersigned ✓`);
+    note("check", `Round ${data.tick / client.R + 1}: NPC reveal matches its commit ✓ · NPC signature ✓ · ${client.demo ? "the player" : "you"} countersigned ✓`);
     return;
   }
   if (kind === "commit") return note("check", text);
@@ -281,7 +281,7 @@ function onSettle(e, text) {
   setTimeout(() => {
     if (w === SIDE.FIRST) {
       fx.confetti(CENTER, CENTER + 20, [COL.a, "#ffd166", "#ffffff", "#06d6a0"]);
-      fx.show("You win", { sub: text, color: "#ffd166", dur: 2600 });
+      fx.show(client?.demo ? "The player wins" : "You win", { sub: text, color: "#ffd166", dur: 2600 });
       sfx.win();
       setTimeout(() => sfx.coins(), 350);
     } else if (w === SIDE.SECOND) {
@@ -309,9 +309,10 @@ function note(kind, text, tx) {
   const t = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   li.innerHTML = `<span class="t">${t}</span>`;
   li.append(document.createTextNode(text));
-  if (tx && chainInfo?.explorer) {
+  const explorer = chainInfo?.explorer || (demoOn ? DEMO_EXPLORER : null);
+  if (tx && explorer) {
     const a = document.createElement("a");
-    a.href = `${chainInfo.explorer}/txns/${tx}`;
+    a.href = `${explorer}/txns/${tx}`;
     a.target = "_blank";
     a.rel = "noopener";
     a.className = "tx";
@@ -648,7 +649,7 @@ function renderRoster() {
     li.innerHTML = `
       <div><span class="name">${n.name}</span>${n.status === "open" ? "" : '<span class="pill closed">closed</span>'}
         <div class="style">${n.style} · ${STYLE_INFO[n.style]}</div>
-        <div class="meta">rating ${n.rating} · ${n.wins}W ${n.losses}L ${n.draws}D · bankroll ${fmt(n.bankroll)}</div>
+        <div class="meta">rating ${n.rating} · ${n.wins}W ${n.losses}L ${n.draws}D · bankroll ${testnet() && n.account ? `<a href="${chainInfo.explorer}/address/${n.account}" target="_blank" rel="noopener" title="its real NEAR account">${fmt(n.bankroll)} ↗</a>` : fmt(n.bankroll)}</div>
       </div>
       <div class="price">asks ${fmt(n.stake)}</div>
       <div class="acts">
@@ -723,13 +724,25 @@ function renderChart() {
     ctx.stroke();
   });
   $("legend").innerHTML = state.roster.map((n, i) => `<span><i style="background:${COLORS[i % COLORS.length]}"></i>${n.name}${n.status === "open" ? "" : " (closed)"}</span>`).join("");
-  $("simdays").textContent = state.simDays ? `${state.simDays} simulated days so far` : "";
+  if (testnet()) {
+    $("ff").hidden = true;
+    $("simdays").textContent = `Fighters play each other on-chain every ${chainInfo.ladderMin ?? 15} min. Bankrolls are their real NEAR balances.`;
+  } else $("simdays").textContent = state.simDays ? `${state.simDays} simulated days so far` : "";
 }
 
 function addFeed(f) {
   const li = document.createElement("li");
   li.innerHTML = `<span class="t">${new Date(f.t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>`;
   li.append(document.createTextNode(f.text));
+  if (f.url) {
+    const a = document.createElement("a");
+    a.href = f.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.className = "tx";
+    a.textContent = " tx ↗";
+    li.append(a);
+  }
   $("feed").prepend(li);
 }
 function renderFeed() {
@@ -751,6 +764,91 @@ $("ff").addEventListener("click", async () => {
   }
 });
 
+// ---------- recorded demo: a real lie caught on NEAR testnet ----------
+// Plays back web/demo/lie.json (recorded by `scripts-testnet-e2e.mjs --record`)
+// through the same table, checks and stamps as a live match. The moves are
+// replayed locally with the same engine; every linked transaction is real.
+const DEMO_EXPLORER = "https://testnet.nearblocks.io";
+let demoOn = false;
+const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+
+async function playDemo() {
+  if (demoOn || aimResolve || anim || replayView) return;
+  if (client && !client.demo && client.verdict == null) return note("problem", "Finish your match first, then watch the demo.");
+  demoOn = true;
+  $("demobtn").disabled = true;
+  try {
+    const rec = await fetch("demo/lie.json").then((r) => r.json());
+    const R = rec.roundTicks;
+    const D = rec.duration;
+    const records = rec.records.map((r) => ({ tick: r.tick, entries: r.entries.map((e) => ({ ball: e.ball, dvx: BigInt(e.dvx), dvy: BigInt(e.dvy) })) }));
+    engine.reset();
+    client = { demo: true, id: -rec.match, info: { npc: rec.npc, rounds: rec.rounds }, R, D, records, table: engine.getState(), verdict: null };
+    const ev = (k) => rec.events.find((e) => e.kind === k);
+    const say = (t) => t.split(rec.player).join("the player");
+    $("record").innerHTML = "";
+    $("lie").hidden = true;
+    fx.clearTrails();
+    finalMarks = false;
+    view = client.table;
+    $("npcname").textContent = rec.npc.name;
+    $("youname").textContent = "Player";
+    setRound(0, rec.rounds);
+    updateDist(view);
+    $("table").scrollIntoView({ behavior: "smooth", block: "center" });
+    note("demo", `Recording of real match #${rec.match} on NEAR testnet. The moves replay here; every linked transaction is real.`);
+    fx.show(`Player vs ${rec.npc.name}`, { sub: `recorded match #${rec.match} · ${fmt(2 * rec.stake)} pot`, dur: 2000 });
+    setStatus(`${rec.npc.name} has been told to lie about the result. Watch.`);
+    await sleep(1800);
+    for (const k of ["create", "join"]) {
+      const e = ev(k);
+      if (e) note("chain", say(e.text), e.tx);
+      await sleep(700);
+    }
+    let state = client.table;
+    for (let i = 0; i < rec.rounds; i++) {
+      setRound(i, rec.rounds);
+      fx.show(i === rec.rounds - 1 ? "Final round" : `Round ${i + 1}`, { dur: 900 });
+      await sleep(900);
+      const tick = i * R;
+      const entries = records.find((r) => r.tick === tick)?.entries ?? [];
+      engine.setState(state);
+      engine.tick(encodeEntries(entries), tick);
+      engine.runTicks(R - 1, tick + 1);
+      client.table = engine.getState();
+      onClientLog("round", "", { roundStart: state, entries, tick });
+      state = client.table;
+      await sleep((R / 60) * 1000 + 400);
+    }
+    client.verdict = engine.replay(encodeLog(records), D, D - 1).winner;
+    onClientLog("final", `Our own replay of all ${D} ticks: ${client.verdict === SIDE.FIRST ? "the player won" : client.verdict === SIDE.SECOND ? rec.npc.name + " won" : "a draw"}`);
+    await sleep(2000);
+    const claim = ev("claim");
+    onClientLog("chain", say(claim.text), claim);
+    await sleep(2400);
+    note("you", "The claim contradicts the replay: the player disputes on-chain with the NPC's own signature.");
+    setStatus("Disputing: the signed log goes to the contract…");
+    await sleep(1400);
+    const replay = ev("replay");
+    onClientLog("chain", say(replay.text), replay);
+    await sleep((D / (60 * 9)) * 1000 + 2200);
+    const settle = ev("settle");
+    onClientLog("chain", say(settle.text), settle);
+    await sleep(3200);
+    note("demo", "No server and no person decided this: the contract replayed the match and paid the real winner. Now pick a fighter and play (tick “NPC lies” to make it lie to you).");
+    setStatus("Your turn: pick a fighter.");
+  } catch (e) {
+    note("problem", "demo: " + e.message);
+  } finally {
+    demoOn = false;
+    $("demobtn").disabled = false;
+  }
+}
+$("demobtn").addEventListener("click", () => {
+  sound.unlock();
+  playDemo();
+});
+
 // ---------- boot ----------
 if (me && localStorage.getItem("noref-name")) {
   try {
@@ -762,3 +860,4 @@ if (me && localStorage.getItem("noref-name")) {
   $("login").hidden = false;
   await refresh();
 }
+if (location.hash === "#demo") setTimeout(playDemo, 800);
