@@ -225,10 +225,11 @@ export class Fx {
     g.scale(scale, scale);
     g.textAlign = "center";
     g.textBaseline = "middle";
-    const fs = Math.round(S / 9);
-    g.font = `800 ${fs}px ui-sans-serif, system-ui, sans-serif`;
+    const fs = Math.round(S / 8);
+    g.font = `900 ${fs}px "Barlow Condensed", "Arial Narrow", ui-sans-serif, sans-serif`;
+    const text = b.text.toUpperCase();
     if (b.stamp) {
-      const w = g.measureText(b.text).width + fs * 0.8;
+      const w = g.measureText(text).width + fs * 0.8;
       g.fillStyle = "rgba(0,0,0,0.45)";
       g.fillRect(-w / 2, -fs * 0.75, w, fs * 1.5);
       g.lineWidth = fs * 0.09;
@@ -239,13 +240,13 @@ export class Fx {
       g.fillRect(-S / 2, -fs * 0.9, S, fs * (b.sub ? 2.2 : 1.8));
     }
     g.fillStyle = b.color;
-    g.fillText(b.text, 0, 0);
+    g.fillText(text, 0, 0);
     if (b.sub && b.stamp) {
-      g.font = `600 ${Math.round(fs * 0.3)}px ui-sans-serif, system-ui, sans-serif`;
+      g.font = `600 ${Math.round(fs * 0.3)}px Inter, ui-sans-serif, system-ui, sans-serif`;
       g.fillStyle = b.color;
       g.fillText(b.sub, 0, fs * 1.15);
     } else if (b.sub) {
-      g.font = `600 ${Math.round(fs * 0.32)}px ui-sans-serif, system-ui, sans-serif`;
+      g.font = `600 ${Math.round(fs * 0.32)}px Inter, ui-sans-serif, system-ui, sans-serif`;
       g.fillStyle = "rgba(255,255,255,0.9)";
       g.fillText(b.sub, 0, fs * 0.85);
     }

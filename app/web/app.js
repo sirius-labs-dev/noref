@@ -10,7 +10,7 @@ const $ = (id) => document.getElementById(id);
 const ARENA = 256;
 const RADIUS = 8;
 const CENTER = 128;
-const COL = { a: "rgb(240,138,36)", b: "rgb(61,139,253)", peg: "rgb(214,205,184)" };
+const COL = { a: "rgb(255,122,26)", b: "rgb(47,139,255)", peg: "rgb(176,184,204)" };
 const ballColor = (i) => (i === 0 ? COL.a : i === 1 ? COL.b : COL.peg);
 const ballRGBA = (i, a) => ballColor(i).replace("rgb", "rgba").replace(")", `,${a})`);
 
@@ -155,6 +155,8 @@ async function challenge(npcId) {
       r = await api("/api/opened", { me, id: o.id, tx: o.hash });
     }
     note("you", `You opened match #${r.match.id} vs ${r.match.npc.name} for ${fmt(r.stake)} each.` + (liar ? " This NPC will lie about the result." : ""));
+    clearStage();
+    setPot(2 * r.stake);
     client = new MatchClient({ engine, api, me, key, info: r.match, aim: waitForAim, log: onClientLog, chain: pc?.opsFor(r.match.id) });
     early.splice(0).filter((e) => e.match === r.match.id && e.kind !== "create").forEach((e) => note("chain", e.text, e.tx));
     view = client.table;
@@ -173,7 +175,7 @@ async function challenge(npcId) {
 }
 
 function setRound(i, n) {
-  $("round").textContent = i < n ? `Round ${i + 1} / ${n}` : "Match over";
+  $("round").textContent = i < n ? `${i + 1}/${n}` : "END";
   $("pips").innerHTML = Array.from({ length: n }, (_, k) => `<i class="${k < i ? "done" : k === i ? "now" : ""}"></i>`).join("");
 }
 
@@ -279,6 +281,7 @@ function onSettle(e, text) {
   const w = e.data.winner;
   const delay = replayView ? 2600 : 200;
   setTimeout(() => {
+    showVerdict(w, text, e.tx);
     if (w === SIDE.FIRST) {
       fx.confetti(CENTER, CENTER + 20, [COL.a, "#ffd166", "#ffffff", "#06d6a0"]);
       fx.show(client?.demo ? "The player wins" : "You win", { sub: text, color: "#ffd166", dur: 2600 });
@@ -294,8 +297,56 @@ function onSettle(e, text) {
   scheduleRefresh();
 }
 
+// ---------- broadcast layers: pot, chain review band, verdict bar ----------
+function setPot(m) {
+  $("pot").textContent = m ? `${(m / 1000).toFixed(2)} Ⓝ` : "–";
+}
+function clearStage() {
+  document.body.classList.remove("reviewing");
+  $("review").hidden = true;
+  $("verdict").hidden = true;
+}
+function showVerdict(w, text, tx) {
+  const reviewed = document.body.classList.contains("reviewing");
+  const who = w === SIDE.FIRST ? (client?.demo ? "The player won." : "You won.") : w === SIDE.SECOND ? `${client?.info?.npc?.name ?? "NPC"} won.` : "Draw.";
+  const el = $("verdict");
+  el.replaceChildren();
+  const lab = document.createElement("div");
+  lab.className = "lab";
+  lab.textContent = reviewed ? "Verdict" : "Final";
+  const txt = document.createElement("div");
+  txt.className = "txt";
+  const span = document.createElement("span");
+  const b = document.createElement("b");
+  b.textContent = who;
+  const m = document.createElement("span");
+  m.className = "muted";
+  m.textContent = " " + text;
+  span.append(b, m);
+  txt.append(span);
+  const explorer = chainInfo?.explorer || (demoOn ? DEMO_EXPLORER : null);
+  if (tx && explorer) {
+    const a = document.createElement("a");
+    a.href = `${explorer}/txns/${tx}`;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = `tx ${tx.slice(0, 6)}… ↗`;
+    txt.append(a);
+  }
+  el.append(lab, txt);
+  el.hidden = false;
+  setTimeout(() => {
+    document.body.classList.remove("reviewing");
+    $("review").hidden = true;
+  }, 1800);
+}
+
 /** NEAR replays the whole match: show it, fast, with the verdict stamped at the end. */
 function startReplayVisual(data) {
+  document.body.classList.add("reviewing");
+  $("reviewsub").textContent = "the contract is replaying the signed log";
+  $("review").hidden = false;
+  $("verdict").hidden = true;
   engine.reset();
   replayView = { records: client.records.filter((r) => r.tick <= data.signedTick), bytes: engine.getState(), tick: 0, end: client.D, acc: 0, data };
   fx.clearTrails();
@@ -383,15 +434,15 @@ function resize() {
   const w = Math.round(cv.getBoundingClientRect().width * Math.min(2, devicePixelRatio || 1));
   if (w && w !== S) {
     S = cv.width = cv.height = w;
-    tableImg = renderTable(S, { felt: css("--felt"), felt2: css("--felt-2"), ringOuter: "rgba(61,139,253,0.18)", ringInner: "rgba(240,138,36,0.22)" });
+    tableImg = renderTable(S, { felt: css("--felt"), felt2: css("--felt-2"), ringOuter: "rgba(47,139,255,0.20)", ringInner: "rgba(255,122,26,0.24)" });
   }
 }
 new ResizeObserver(resize).observe(cv);
 
 function updateDist(bytes) {
   engine.setState(bytes);
-  $("distA").textContent = Math.sqrt(engine.dist2(0)).toFixed(1) + " from ◎";
-  $("distB").textContent = Math.sqrt(engine.dist2(1)).toFixed(1) + " from ◎";
+  $("distA").textContent = Math.sqrt(engine.dist2(0)).toFixed(1);
+  $("distB").textContent = Math.sqrt(engine.dist2(1)).toFixed(1);
 }
 
 let last = performance.now();
@@ -410,7 +461,8 @@ function frame(now) {
       const d = replayView.data;
       replayView = null;
       if (client) view = client.table;
-      fx.show(d.overturned ? "LIE CAUGHT" : "CLAIM CORRECT", { stamp: true, color: d.overturned ? "#ff5a4a" : "#5ee59a", dur: 4000, sub: d.overturned ? "the replay disagrees with the claim" : "" });
+      fx.show(d.overturned ? "LIE CAUGHT" : "CLAIM CORRECT", { stamp: true, color: d.overturned ? "#ff3b3b" : "#1fd17a", dur: 4000, sub: d.overturned ? "claim overturned by the contract's replay" : "the replay agrees with the claim" });
+      $("reviewsub").textContent = d.overturned ? "claim overturned · paying the real winner" : "claim confirmed by the replay";
       sfx.stamp();
     }
     updateDist(view);
@@ -642,16 +694,18 @@ function renderRoster() {
   const ul = $("roster");
   ul.innerHTML = "";
   const busy = client && !client.settled;
-  for (const n of state.roster) {
+  state.roster.forEach((n, idx) => {
     const li = document.createElement("li");
     li.className = "npc" + (n.status === "open" ? "" : " closed");
+    li.style.setProperty("--c", COLORS[idx % COLORS.length]);
+    const tr = trendOf(n);
     const mine = state.me ? n.holders[state.me.id] ?? 0 : 0;
     li.innerHTML = `
       <div><span class="name">${n.name}</span>${n.status === "open" ? "" : '<span class="pill closed">closed</span>'}
         <div class="style">${n.style} · ${STYLE_INFO[n.style]}</div>
         <div class="meta">rating ${n.rating} · ${n.wins}W ${n.losses}L ${n.draws}D · bankroll ${testnet() && n.account ? `<a href="${chainInfo.explorer}/address/${n.account}" target="_blank" rel="noopener" title="its real NEAR account">${fmt(n.bankroll)} ↗</a>` : fmt(n.bankroll)}</div>
       </div>
-      <div class="price">asks ${fmt(n.stake)}</div>
+      <div class="price">asks ${fmt(n.stake)}${tr ? `<span class="trend ${tr.pct >= 0 ? "up" : "down"}">${tr.pct >= 0 ? "▲" : "▼"} ${Math.abs(tr.pct).toFixed(0)}%</span>${tr.svg}` : ""}</div>
       <div class="acts">
         <button class="small" data-act="fight" ${n.status !== "open" || busy || !state.me ? "disabled" : ""}>Challenge</button>
         <button class="small ghost" data-act="back" ${!state.me ? "disabled" : ""}>Back with ${BACK()} NEAR</button>
@@ -685,10 +739,38 @@ function renderRoster() {
       await refresh();
     });
     ul.append(li);
-  }
+  });
+  renderTicker();
 }
 
-const COLORS = ["#f08a24", "#3d8bfd", "#1f8a4c", "#a855f7", "#e11d48", "#0d9488"];
+/** Bankroll trend over the fighter's recent history, with a tiny sparkline. */
+function trendOf(n) {
+  const h = (n.history ?? []).slice(-40).map((x) => x.bankroll);
+  if (h.length < 2 || !h[0]) return null;
+  const pct = ((h[h.length - 1] - h[0]) / h[0]) * 100;
+  const lo = Math.min(...h);
+  const hi = Math.max(...h);
+  const pts = h.map((v, i) => `${((i / (h.length - 1)) * 70).toFixed(1)},${(16 - ((v - lo) / (hi - lo || 1)) * 14).toFixed(1)}`).join(" ");
+  const col = pct >= 0 ? "#1fd17a" : "#ff3b3b";
+  return { pct, svg: `<svg class="spark" width="70" height="18" viewBox="0 0 70 18" aria-hidden="true"><polyline fill="none" stroke="${col}" stroke-width="1.5" points="${pts}"/></svg>` };
+}
+
+/** Economy ticker: every fighter's price and trend, then the latest feed lines. */
+function renderTicker() {
+  const t = $("ticktrack");
+  if (!t || !state) return;
+  const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const items = state.roster.map((n) => {
+    const tr = trendOf(n);
+    const dir = !tr ? "" : tr.pct >= 0 ? `<span class="up">▲</span>` : `<span class="down">▼</span>`;
+    return `<span>${esc(n.name.toUpperCase())} <b>${(n.stake / 1000).toFixed(2)}</b> ${dir}${n.status === "open" ? "" : " closed"}</span>`;
+  });
+  for (const f of state.feed.slice(-5).reverse()) items.push(`<span>· ${esc(f.text)}${f.url ? ` <a href="${esc(f.url)}" target="_blank" rel="noopener">tx ↗</a>` : ""}</span>`);
+  const once = items.join("");
+  t.innerHTML = once + once;
+}
+
+const COLORS = ["#ffb02e", "#2f8bff", "#1fd17a", "#a855f7", "#ff6bd6", "#14b8a6"];
 function renderChart() {
   const c = $("chart");
   const ctx = c.getContext("2d");
@@ -788,6 +870,8 @@ async function playDemo() {
     const say = (t) => t.split(rec.player).join("the player");
     $("record").innerHTML = "";
     $("lie").hidden = true;
+    clearStage();
+    setPot(2 * rec.stake);
     fx.clearTrails();
     finalMarks = false;
     view = client.table;
@@ -831,7 +915,9 @@ async function playDemo() {
     await sleep(1400);
     const replay = ev("replay");
     onClientLog("chain", say(replay.text), replay);
-    await sleep((D / (60 * 9)) * 1000 + 2200);
+    await sleep((D / (60 * 9)) * 1000);
+    while (replayView) await sleep(100); // slow devices: let the replay finish first
+    await sleep(2200);
     const settle = ev("settle");
     onClientLog("chain", say(settle.text), settle);
     await sleep(3200);

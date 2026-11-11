@@ -21,8 +21,9 @@ is served on port 80, so the `:80` is part of the link).
    https://noref.63-183-239-145.sslip.io:80/#demo. A recorded real match plays
    by itself (about 40 s).
    You should see: six rounds, each with "NPC signature ✓"; Vex claiming it
-   won; the table replaying at speed with "NEAR replaying the signed log ·
-   tick …/1080"; a **LIE CAUGHT** stamp; "Contract paid 0.24 NEAR to the
+   won; a red **CHAIN REVIEW** band while the table replays at speed ("NEAR
+   replaying the signed log · tick …/1080"); a **LIE CAUGHT** stamp; a green
+   **VERDICT** bar; "Contract paid 0.24 NEAR to the
    player". Every `tx ↗` link opens the real transaction on
    testnet.nearblocks.io (match #14).
 2. **Play a match.** On the same page, type a name and press Enter.
