@@ -39,12 +39,20 @@ is served on port 80, so the `:80` is part of the link).
    If you win, the NPC claims it won anyway; your browser disputes with the
    NPC's own signature and the contract overturns the claim (LIE CAUGHT). If
    you lose, press "Claim I won anyway" and watch the NPC prove you wrong.
-5. **Check the economy is real.** Click a fighter's bankroll (`1.3 NEAR ↗`): it
+5. **Play a friend.** In "Play a friend", set a stake and press Create invite,
+   then open the link in another browser (or send it to someone). They log in
+   and press "Lock my stake and play"; the match starts for both of you.
+   You should see: both `create` and `join` transactions, each round checked
+   against the other person's commit, and at the end the creator's claim
+   confirmed by the other side. If the loser presses "Claim I won anyway", the
+   winner's browser disputes it with the loser's own signature and the
+   contract overturns it.
+6. **Check the economy is real.** Click a fighter's bankroll (`1.3 NEAR ↗`): it
    is that NPC's own account on nearblocks. The feed below the table shows
    NPC-vs-NPC ladder matches played on the contract every 15 minutes, each with
    a `tx ↗` link.
 
-Headless version of steps 2 to 4 against the hosted demo (costs a little test
+Headless version of steps 2 to 5 against the hosted demo (costs a little test
 NEAR; the test account is deleted afterwards and its balance returned to the
 house). Without `--url` the script starts its own testnet server, which needs
 the house key in `.keys/`:
@@ -53,6 +61,7 @@ the house key in `.keys/`:
 cd app
 node scripts-testnet-e2e.mjs vex --liar --url=https://noref.63-183-239-145.sslip.io:80   # NPC lies, player disputes
 node scripts-testnet-e2e.mjs dot --human-lies --url=https://noref.63-183-239-145.sslip.io:80  # player lies, NPC disputes
+node scripts-testnet-pvp.mjs --url=https://noref.63-183-239-145.sslip.io:80 --lie   # two people, the loser lies
 ```
 
 ## Why NEAR
@@ -76,7 +85,8 @@ node scripts-testnet-e2e.mjs dot --human-lies --url=https://noref.63-183-239-145
 ## How a match works
 
 1. The player calls `create` (attaching the stake, with a session key). The
-   NPC calls `join` with the same stake and its own session key.
+   NPC, or a friend who opened the invite link, calls `join` with the same
+   stake and their own session key.
 2. Each round both sides commit to a hidden flick, then reveal it. The server
    only relays. After every round both sides sign the head of the input chain
    with their session keys, so each holds the other's signature over the log
@@ -123,6 +133,12 @@ Every rule is in `app/shared/economy.js`.
   dispute [9EYsrnD5…](https://testnet.nearblocks.io/txns/9EYsrnD5rLJTyzgV83aAuarbSmekHyikd7PAiD9Wncyp)
   (replay, 18.5 Tgas), payout
   [4272xoVG…](https://testnet.nearblocks.io/txns/4272xoVGdQZze7StfJAtdpYLqi2hbqwFgnMRPQ2P6mUK)
+- Two people, the loser lies (match #19): false claim
+  [A7Tqis4y…](https://testnet.nearblocks.io/txns/A7Tqis4yVkSarULX6FQ3ABY6baULMhbc39L6Myig8dcR),
+  the winner's dispute
+  [A2sqxkat…](https://testnet.nearblocks.io/txns/A2sqxkatA8mDPa5fA55DrxqmetB5aLsxqgPhgGTzTFVe)
+  (18.5 Tgas), payout
+  [C1agpkxN…](https://testnet.nearblocks.io/txns/C1agpkxN57haVDdvm6DxdC1KPTTqdMPLr7BQaraQFYXF)
 - An NPC-vs-NPC ladder match on the contract (match #13):
   [2wXVtPKF…](https://testnet.nearblocks.io/txns/2wXVtPKFRBoksBRCFwfPrNRdh2yQv6UZjKwxbH819yNu)
 - NPC accounts: `npc-rook`, `npc-brick`, `npc-moss`, `npc-vex`, `npc-pip`,
@@ -159,8 +175,8 @@ cd app && CHAIN=testnet PORT=8789 DATA=./data/testnet node server/main.ts
 ```
 
 Tests (all pass from a clean copy: 30 Rust tests, 5 contract flow tests in a
-NEAR sandbox, 9 app tests including three full local matches: honest, lying
-NPC, lying player):
+NEAR sandbox, 11 app tests including five full local matches: honest, lying
+NPC, lying player, and two people with and without a lie):
 
 ```
 cargo test -p tick-core -p tick-merkle -p arena -p noref-rules
@@ -197,7 +213,11 @@ Not claimed:
   and backs bankrupt fighters. It is a sponsor, not a referee: it cannot
   change a result.
 - The server is a matchmaker and relay: it cannot change a result, but it can
-  be offline or refuse to match you.
+  be offline or refuse to match you. Between two people it relays commits,
+  reveals and signatures; each browser checks them itself.
+- Between two people the session keys live in each browser; a player who
+  closes the tab mid-match stops signing, and the other side can only dispute
+  with the signatures it already holds (a shorter log).
 - The demo dispute window is 15 seconds so matches finish fast; the contract
   accepts 10 seconds to 24 hours.
 - The demo faucet gives each new account 0.8 test NEAR and is rate limited
@@ -243,7 +263,8 @@ reviewed by the team.
 - `crates/tick-core` - no_std deterministic tick primitives
 - `crates/merkle` - chunked sha256 merkle tree over game state
 - `games/arena` - the table: flick-and-park physics with elastic collisions
-- `app/server` - matchmaking, NPC play, local chain mirror, testnet adapter
+- `app/server` - matchmaking, NPC play, person-vs-person relay (`match.ts`),
+  local chain mirror, testnet adapter
 - `app/shared/economy.js` - every economy rule, in one file
 - `app/shared/npc.js` - NPC brains
 - `app/shared/client.js` - the player's side of the protocol

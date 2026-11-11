@@ -2,8 +2,9 @@
 // end-to-end test). It trusts nobody:
 //
 // - keeps its own copy of the table and of the input log,
-// - checks the NPC's reveal against the NPC's commit every round,
-// - checks the NPC's signature over the input-chain head every round,
+// - checks the opponent's reveal against its commit every round,
+// - checks the opponent's signature over the input-chain head every round
+//   (an NPC's comes with the round; a person's arrives once they have signed),
 // - countersigns the head itself with its own session key,
 // - replays the whole match locally at the end, then confirms a true
 //   claim or disputes a false one with the NPC's own signature.
@@ -39,8 +40,14 @@ export class MatchClient {
    * aim(engine, ctx) -> Promise<{angle, power} | null> picks this round's flick
    * (engine holds the round-start table); log(kind, text, data) for the UI.
    */
-  constructor({ engine, api, me, key, info, aim, log, autoSettle = true, chain }) {
-    Object.assign(this, { engine, api, me, key, info, aim, log: log ?? (() => {}), autoSettle });
+  constructor({ engine, api, me, key, info, aim, log, autoSettle = true, chain, claimer = false, claimDelayMs = 4000 }) {
+    Object.assign(this, { engine, api, me, key, info, aim, log: log ?? (() => {}), autoSettle, claimer, claimDelayMs });
+    // which seat we are in: 0 created the match (ball 0, contract side FIRST)
+    this.side = info.side ?? 0;
+    this.opp = 1 - this.side;
+    this.mySide = this.side === 0 ? SIDE.FIRST : SIDE.SECOND;
+    this.oppKey = info.oppKey ?? info.npcKey;
+    this.claimSeen = false;
     // where claim/confirm/dispute go: the server's local chain by default, or
     // transactions this client signs itself (testnet)
     this.chain = chain ?? {
@@ -74,6 +81,7 @@ export class MatchClient {
     if (kind === "reveal") return this.onReveal();
     if (kind === "round_result") return this.onResult(d);
     if (kind === "final") return this.onFinal(d);
+    if (kind === "oppsig") return this.onOppSig(d);
     if (kind === "chain") return this.onChain(d);
     if (kind === "note") this.log("note", d.text);
   }
@@ -85,7 +93,7 @@ export class MatchClient {
     const choice = await this.aim(this.engine, { round: d.round, deadline: d.deadline, rounds: this.info.rounds });
     this.engine.setState(this.table);
     const imp = choice && choice.power > 0 ? flickToImpulse(this.engine, choice.angle, choice.power) : { dvx: 0n, dvy: 0n };
-    const entry = { ball: 0, dvx: imp.dvx, dvy: imp.dvy };
+    const entry = { ball: this.side, dvx: imp.dvx, dvy: imp.dvy };
     const salt = globalThis.crypto.getRandomValues(new Uint8Array(16));
     const hash = await commitHash(this.id, d.round, entry, salt);
     this.secret = { entry, salt };
@@ -101,12 +109,16 @@ export class MatchClient {
 
   async onResult(d) {
     const entries = d.entries.map((e) => ({ ball: e.ball, dvx: BigInt(e.dvx), dvy: BigInt(e.dvy) }));
-    // 1. the NPC's flick must be the one it committed to before seeing ours
-    const npcEntry = entries.find((e) => e.ball === 1) ?? { ball: 1, dvx: 0n, dvy: 0n };
-    const okCommit = (await commitHash(this.id, d.round, npcEntry, unhex(d.npcSalt))) === d.npcCommit;
-    if (!okCommit) this.problem(`Round ${d.round + 1}: NPC reveal does not match its commit`);
+    // 1. the opponent's flick must be the one it committed to before seeing ours
+    const oppEntry = entries.find((e) => e.ball === this.opp) ?? { ball: this.opp, dvx: 0n, dvy: 0n };
+    const oppCommit = d.commits ? d.commits[this.opp] : d.npcCommit;
+    const oppSalt = d.salts ? d.salts[this.opp] : d.npcSalt;
+    if (oppCommit && oppCommit !== "pass" && oppSalt) {
+      const okCommit = (await commitHash(this.id, d.round, oppEntry, unhex(oppSalt))) === oppCommit;
+      if (!okCommit) this.problem(`Round ${d.round + 1}: ${this.info.npc.name}'s reveal does not match its commit`);
+    } else if (entries.some((e) => e.ball === this.opp)) this.problem(`Round ${d.round + 1}: a flick for ${this.info.npc.name} without a commit`);
     // 2. our own flick must be in the record exactly as we sent it
-    const mine = entries.find((e) => e.ball === 0);
+    const mine = entries.find((e) => e.ball === this.side);
     const sent = this.secret?.entry;
     if (sent && (sent.dvx !== 0n || sent.dvy !== 0n) && !(mine && mine.dvx === sent.dvx && mine.dvy === sent.dvy)) this.problem(`Round ${d.round + 1}: our flick was dropped or altered`);
     // 3. extend our own log and table
@@ -120,27 +132,51 @@ export class MatchClient {
     const head = this.engine.headAt(log, this.D, d.signedTick);
     if (hex(head) !== d.head) this.problem(`Round ${d.round + 1}: server's log head differs from ours`);
     const digest = this.engine.signDigest(this.id, d.signedTick, head);
-    if (await verifyEd(this.info.npcKey, digest, d.npcSig)) this.npcSig = { tick: d.signedTick, sig: d.npcSig };
-    else this.problem(`Round ${d.round + 1}: NPC signature invalid`);
+    if (d.npcSig) {
+      if (await verifyEd(this.oppKey, digest, d.npcSig)) this.npcSig = { tick: d.signedTick, sig: d.npcSig };
+      else this.problem(`Round ${d.round + 1}: NPC signature invalid`);
+    }
     // 5. countersign
     const sig = new Uint8Array(await subtle.sign({ name: "Ed25519" }, this.key.kp.privateKey, digest));
     await this.api(`/api/match/${this.id}/sign`, { me: this.me, tick: d.signedTick, sig: hex(sig) });
     this.log("round", `Round ${d.round + 1} recorded. Both signed the log up to tick ${d.signedTick}.`, { entries, roundStart: this.roundStart, tick: d.tick });
   }
 
+  /** A person's signature over the head at `tick`, checked against OUR log. */
+  async onOppSig(d) {
+    const log = encodeLog(this.records.filter((r) => r.tick <= d.tick));
+    const head = this.engine.headAt(log, this.D, d.tick);
+    if (await verifyEd(this.oppKey, this.engine.signDigest(this.id, d.tick, head), d.sig)) {
+      if (!this.npcSig || d.tick > this.npcSig.tick) this.npcSig = { tick: d.tick, sig: d.sig };
+    } else this.problem(`${this.info.npc.name}'s signature for tick ${d.tick} is invalid`);
+  }
+
   onFinal() {
+    if (this.verdict != null) return;
     const log = encodeLog(this.records);
     this.verdict = this.engine.replay(log, this.D, this.D - 1).winner;
     this.log("final", `Our own replay of all ${this.D} ticks: ${this.sideText(this.verdict)}`, { verdict: this.verdict });
+    // between two people the creator claims the true result, after a pause in
+    // which the loser may try to claim a win instead (and get disputed)
+    if (this.claimer)
+      setTimeout(async () => {
+        if (this.claimSeen || this.settled) return;
+        try {
+          await this.chain.claim(this.verdict);
+        } catch (e) {
+          if (!/already claimed|not live/.test(String(e.message))) this.problem(String(e.message ?? e));
+        }
+      }, this.claimDelayMs);
   }
 
   sideText(w) {
-    return w === SIDE.FIRST ? "you won" : w === SIDE.SECOND ? `${this.info.npc.name} won` : "draw";
+    return w === this.mySide ? "you won" : w === SIDE.DRAW ? "draw" : `${this.info.npc.name} won`;
   }
 
   async onChain(e) {
     this.log("chain", e.text, e);
     if (e.kind === "settle") this.settled = true;
+    if (e.kind === "claim") this.claimSeen = true;
     if (!this.autoSettle || e.kind !== "claim") return;
     if (e.data.by === this.me) return;
     if (this.verdict == null) this.onFinal();
@@ -153,15 +189,15 @@ export class MatchClient {
   }
 
   async dispute() {
-    if (!this.npcSig) throw new Error("no NPC signature to dispute with");
+    if (!this.npcSig) throw new Error(`no signature from ${this.info.npc.name} to dispute with`);
     const log = encodeLog(this.records.filter((r) => r.tick <= this.npcSig.tick));
-    this.log("you", `The claim contradicts our replay: disputing on-chain with the NPC's own signature (tick ${this.npcSig.tick}).`);
+    this.log("you", `The claim contradicts our replay: disputing on-chain with ${this.info.pvp ? this.info.npc.name + "'s" : "the NPC's"} own signature (tick ${this.npcSig.tick}).`);
     return this.chain.dispute(log, this.npcSig.tick, this.npcSig.sig);
   }
 
   /** The "be the liar" demo: claim a win you did not earn. */
   async falseClaim() {
-    return this.chain.claim(SIDE.FIRST);
+    return this.chain.claim(this.mySide);
   }
 
   problem(text) {

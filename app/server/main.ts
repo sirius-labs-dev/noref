@@ -30,7 +30,7 @@ import * as eco from "../shared/economy.js";
 import { LocalChain } from "./chain-local.ts";
 import { TestnetChain } from "./chain-testnet.ts";
 import { Near } from "../shared/near.js";
-import { LiveMatch } from "./match.ts";
+import { LiveMatch, PvpMatch } from "./match.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const PORT = Number(process.env.PORT ?? 8787);
@@ -99,6 +99,10 @@ function broadcast(kind: string, data: unknown) {
 const live = new Map<number, LiveMatch>();
 const escrow = new Map<number, { npc: string; stake: number }>();
 const pendingOpen = new Map<string, { npc: string; stake: number; liar: boolean; t: number }>();
+// person vs person: open invites by match id, and testnet creates waiting for their tx
+const invites = new Map<number, { host: string; stake: number; t: number }>();
+const pendingPvp = new Map<string, { stake: number; t: number }>();
+const inMatch = (me: string) => [...live.values()].some((m: any) => (m.pvp ? m.players.includes(me) : m.human === me));
 const usedTx = new Set<string>();
 
 chain.onEvent = (e) => {
@@ -113,6 +117,15 @@ chain.onEvent = (e) => {
 
 function onSettled(id: number) {
   const m = chain.matches[id];
+  const lm: any = live.get(id);
+  if (lm?.pvp) {
+    const [a, b] = lm.players.map(PvpMatch.short);
+    const r = m.replayed ? (m.replayed.winner !== m.claim?.winner ? " after a replay overturned a false claim" : " after a replay confirmed the claim") : "";
+    feed(`${a} vs ${b}: ${m.result === SIDE.DRAW ? "draw" : (m.result === SIDE.FIRST ? a : b) + " won"} ${eco.fmt(2 * m.stake)} pot${r}`);
+    live.delete(id);
+    persist();
+    return;
+  }
   const esc = escrow.get(id);
   if (!esc) return;
   escrow.delete(id);
@@ -385,7 +398,7 @@ async function api(req: any, url: URL): Promise<unknown> {
     const pl = player(me);
     const npc = npcById(q.npc);
     need(npc && eco.isOpen(npc), "that NPC is closed");
-    need(![...live.values()].some((m) => m.human === me), "finish your current match first");
+    need(!inMatch(me), "finish your current match first");
     const { stake } = eco.askStake(npc, nowW());
     if (TESTNET) await chain.refreshBalance(me);
     need(chain.balance(me) >= stake + (TESTNET ? 20 : 0), `you need ${eco.fmt(stake)}`);
@@ -399,6 +412,91 @@ async function api(req: any, url: URL): Promise<unknown> {
     // human opens (side A, ball 0), NPC joins (side B, ball 1)
     const id = chain.create(me, stake, engine.MATCH_TICKS, pl.key, WINDOW_SECS);
     return startLive(id, me, pl, npc, stake, !!q.liar);
+  }
+
+  // ---- person vs person, by invite link ----
+  if (p === "/api/pvp/create") {
+    const me = q.me;
+    const pl = player(me);
+    need(!inMatch(me), "finish your current match first");
+    const stake = Math.round(Number(q.amount) * eco.MILLI);
+    need(stake >= eco.MIN_STAKE && stake <= 5 * eco.MILLI, `stake: ${eco.fmt(eco.MIN_STAKE)} to 5 NEAR`);
+    if (TESTNET) await chain.refreshBalance(me);
+    need(chain.balance(me) >= stake + (TESTNET ? 20 : 0), `you need ${eco.fmt(stake)}`);
+    if (TESTNET) {
+      pendingPvp.set(me, { stake, t: Date.now() });
+      return { open: { contract: CONTRACT, method: "create", args: { duration: engine.MATCH_TICKS, session_key: pl.key, window_secs: WINDOW_SECS, opponent: null }, deposit: String(BigInt(stake) * 10n ** 21n) }, stake };
+    }
+    const id = chain.create(me, stake, engine.MATCH_TICKS, pl.key, WINDOW_SECS);
+    invites.set(id, { host: me, stake, t: Date.now() });
+    return { id, stake };
+  }
+
+  if (p === "/api/pvp/opened") {
+    need(TESTNET, "testnet only");
+    const me = q.me;
+    const pl = player(me);
+    const o = pendingPvp.get(me);
+    need(o, "create an invite first");
+    const id = Number(q.id);
+    need(Number.isInteger(id) && id >= 0 && !live.has(id), "bad match id");
+    if (q.tx) chain.hint(id, "create", String(q.tx));
+    const m: any = await chain.track(id);
+    need(m.a === me && m.phase === "open" && m.keyA === pl.key && !m.invited && m.duration === engine.MATCH_TICKS && m.stake === o.stake, "on-chain match does not match the invite");
+    pendingPvp.delete(me);
+    invites.set(id, { host: me, stake: o.stake, t: Date.now() });
+    return { id, stake: o.stake };
+  }
+
+  if (p === "/api/pvp/invite") {
+    const id = Number(q.id);
+    const inv = invites.get(id);
+    const m: any = TESTNET && inv ? await chain.track(id).catch(() => null) : chain.matches[id];
+    return { id, host: inv?.host ?? m?.a ?? null, stake: inv?.stake ?? m?.stake ?? null, open: !!inv && m?.phase === "open" };
+  }
+
+  if (p === "/api/pvp/join") {
+    const me = q.me;
+    const pl = player(me);
+    const id = Number(q.id);
+    const inv = invites.get(id);
+    need(inv, "this invite is gone (already played or cancelled)");
+    need(inv.host !== me, "that is your own invite: send the link to a friend");
+    need(!inMatch(me), "finish your current match first");
+    if (TESTNET) await chain.refreshBalance(me);
+    need(chain.balance(me) >= inv.stake + (TESTNET ? 20 : 0), `you need ${eco.fmt(inv.stake)}`);
+    if (TESTNET) return { call: { contract: CONTRACT, method: "join", args: { id: String(id), session_key: pl.key }, deposit: String(BigInt(inv.stake) * 10n ** 21n) }, stake: inv.stake };
+    chain.join(me, id, pl.key);
+    return startPvp(id, me);
+  }
+
+  if (p === "/api/pvp/joined") {
+    need(TESTNET, "testnet only");
+    const me = q.me;
+    const pl = player(me);
+    const id = Number(q.id);
+    need(invites.has(id), "this invite is gone");
+    if (q.tx) chain.hint(id, "join", String(q.tx));
+    let m: any = null;
+    for (let i = 0; i < 6; i++) {
+      await chain.refresh(id);
+      m = chain.matches[id];
+      if (m?.phase === "live") break;
+      await new Promise((ok) => setTimeout(ok, 800));
+    }
+    need(m && m.b === me && m.phase === "live" && m.keyB === pl.key, "the join is not on-chain yet");
+    return startPvp(id, me);
+  }
+
+  if (p === "/api/pvp/cancel") {
+    const me = q.me;
+    player(me);
+    const id = Number(q.id);
+    const inv = invites.get(id);
+    need(inv && inv.host === me, "not your invite");
+    if (!TESTNET) chain.cancel(me, id); // on testnet the host signs `cancel` in the browser
+    invites.delete(id);
+    return { ok: true };
   }
 
   if (p === "/api/opened") {
@@ -416,7 +514,27 @@ async function api(req: any, url: URL): Promise<unknown> {
     need(m.a === me && m.phase === "open" && m.keyA === pl.key && (m as any).invited === npc.id && m.duration === engine.MATCH_TICKS && m.stake === o.stake, "on-chain match does not match the challenge");
     pendingOpen.delete(me);
     return startLive(id, me, pl, npc, o.stake, o.liar);
-  }  async function startLive(id: number, me: string, pl: any, npc: any, stake: number, liar: boolean) {
+  }  function startPvp(id: number, me: string) {
+    const m: any = chain.matches[id];
+    const inv = invites.get(id)!;
+    invites.delete(id);
+    const pm = new PvpMatch({
+      id,
+      players: [m.a, m.b],
+      keys: [m.keyA, m.keyB],
+      engine,
+      send: (who, k, d) => sendTo(who, k, { match: id, ...(d as object) }),
+      onDone: () => persist(),
+    });
+    live.set(id, pm as any);
+    // the joiner gets its match in the reply; the host is told over its event stream
+    sendTo(m.a, "pvp_start", { match: id, info: pm.info(0), stake: inv.stake });
+    feed(`${PvpMatch.short(m.a)} vs ${PvpMatch.short(m.b)}: a match between two people for ${eco.fmt(2 * inv.stake)}`);
+    setTimeout(() => pm.start(), 1800);
+    return { match: pm.info(pm.sideOf(me)), stake: inv.stake };
+  }
+
+  async function startLive(id: number, me: string, pl: any, npc: any, stake: number, liar: boolean) {
     const lm = new LiveMatch({
       id,
       human: me,
@@ -461,17 +579,21 @@ async function api(req: any, url: URL): Promise<unknown> {
     if (action === "commit") {
       need(lm, "match over");
       need(/^[0-9a-f]{64}$/.test(q.hash ?? ""), "hash");
-      lm.commit(q.hash);
+      if ((lm as any).pvp) (lm as any).commit((lm as any).sideOf(me), q.hash);
+      else lm.commit(q.hash);
       return { ok: true };
     }
     if (action === "reveal") {
       need(lm, "match over");
-      await lm.reveal({ dvx: String(q.dvx), dvy: String(q.dvy), salt: String(q.salt) });
+      const r = { dvx: String(q.dvx), dvy: String(q.dvy), salt: String(q.salt) };
+      if ((lm as any).pvp) await (lm as any).reveal((lm as any).sideOf(me), r);
+      else await lm.reveal(r);
       return { ok: true };
     }
     if (action === "sign") {
       need(lm, "match over");
-      lm.humanSign(Number(q.tick), String(q.sig));
+      if ((lm as any).pvp) (lm as any).sign((lm as any).sideOf(me), Number(q.tick), String(q.sig));
+      else lm.humanSign(Number(q.tick), String(q.sig));
       return { ok: true };
     }
     if (action === "tx") {
@@ -596,7 +718,8 @@ const server = createServer(async (req, res) => {
       res.writeHead(404).end("not found");
       return;
     }
-    res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
+    // revalidate every time, so a redeploy reaches open browsers on reload
+    res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream", "cache-control": "no-cache" });
     res.end(readFileSync(file));
   } catch (e: any) {
     res.writeHead(e.status ?? 400, { "content-type": "application/json" });

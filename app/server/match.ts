@@ -227,3 +227,158 @@ export class LiveMatch {
     };
   }
 }
+
+/**
+ * A live match between two people, each in their own browser. Same protocol
+ * as against an NPC: per round both commit, then both reveal, the server
+ * checks reveals against commits and relays the round; then each side signs
+ * the input-chain head and the server passes that signature to the other
+ * side, which can later dispute with it. The server only relays and checks;
+ * it never decides the result. Side 0 created the match (ball 0, contract
+ * side FIRST); side 1 joined (ball 1, SECOND).
+ */
+export class PvpMatch {
+  id: number;
+  players: [string, string];
+  keys: [string, string];
+  engine: Engine;
+  send: (who: string, kind: string, data: unknown) => void;
+  onDone: (m: PvpMatch) => void;
+  pvp = true;
+
+  round = 0;
+  rounds: number;
+  phase: "commit" | "reveal" | "gap" | "claim" | "done" = "commit";
+  table: Uint8Array;
+  records: Rec[] = [];
+  commits: (string | null)[] = [null, null];
+  reveals: ({ entry: Entry | null; salt: string } | null)[] = [null, null];
+  sigs: ({ tick: number; sig: string } | null)[] = [null, null];
+  timer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(o: { id: number; players: [string, string]; keys: [string, string]; engine: Engine; send: (who: string, k: string, d: unknown) => void; onDone: (m: PvpMatch) => void }) {
+    Object.assign(this, o);
+    this.rounds = this.engine.MATCH_TICKS / this.engine.ROUND_TICKS;
+    this.engine.reset();
+    this.table = this.engine.getState();
+  }
+
+  get R() {
+    return this.engine.ROUND_TICKS;
+  }
+  get D() {
+    return this.engine.MATCH_TICKS;
+  }
+  sideOf(who: string) {
+    const s = this.players.indexOf(who);
+    if (s < 0) throw new Error("not a player in this match");
+    return s;
+  }
+  static short(account: string) {
+    return account.split(".")[0];
+  }
+  /** What side `side` needs to play: its opponent appears where the NPC would. */
+  info(side: number) {
+    const opp = this.players[1 - side];
+    return { id: this.id, pvp: true, side, human: this.players[side], npc: { id: opp, name: PvpMatch.short(opp), style: "human" }, oppKey: this.keys[1 - side], players: this.players.map(PvpMatch.short), rounds: this.rounds, roundTicks: this.R, duration: this.D };
+  }
+  private both(kind: string, data: object) {
+    for (const p of this.players) this.send(p, kind, data);
+  }
+  private clear() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  start() {
+    this.startRound();
+  }
+
+  private startRound() {
+    this.phase = "commit";
+    this.commits = [null, null];
+    this.reveals = [null, null];
+    this.both("round", { round: this.round, deadline: Date.now() + COMMIT_MS });
+    this.clear();
+    // whoever has not committed in time passes this round
+    this.timer = setTimeout(() => {
+      for (const s of [0, 1]) if (!this.commits[s]) this.commits[s] = "pass";
+      this.toReveal();
+    }, COMMIT_MS);
+  }
+
+  commit(side: number, hash: string) {
+    if (this.phase !== "commit") throw new Error("not accepting commits");
+    if (this.commits[side]) throw new Error("already committed");
+    this.commits[side] = hash;
+    this.both("committed", { side });
+    if (this.commits[0] && this.commits[1]) this.toReveal();
+  }
+
+  private toReveal() {
+    this.clear();
+    this.phase = "reveal";
+    this.both("reveal", { round: this.round, deadline: Date.now() + REVEAL_MS });
+    this.timer = setTimeout(() => this.finishRound(), REVEAL_MS);
+  }
+
+  /** A reveal must match its commit, or that side plays no flick this round. */
+  async reveal(side: number, r: { dvx: string; dvy: string; salt: string }) {
+    if (this.phase !== "reveal") throw new Error("not accepting reveals");
+    if (this.reveals[side]) throw new Error("already revealed");
+    let entry: Entry | null = null;
+    if (this.commits[side] !== "pass") {
+      const e = { ball: side, dvx: BigInt(r.dvx), dvy: BigInt(r.dvy) };
+      const h = await commitHash(this.id, this.round, e, unhex(r.salt));
+      if (h !== this.commits[side]) this.send(this.players[side], "note", { text: "Your reveal did not match your commit: no flick this round." });
+      else if (e.dvx !== 0n || e.dvy !== 0n) entry = e;
+    }
+    this.reveals[side] = { entry, salt: r.salt };
+    if (this.reveals[0] && this.reveals[1]) this.finishRound();
+  }
+
+  private finishRound() {
+    if (this.phase !== "reveal") return;
+    this.clear();
+    const entries = [this.reveals[0]?.entry, this.reveals[1]?.entry].filter(Boolean) as Entry[];
+    const tick = this.round * this.R;
+    if (entries.length) this.records.push({ tick, entries });
+    this.engine.setState(this.table);
+    this.engine.tick(encodeEntries(entries), tick);
+    this.engine.runTicks(this.R - 1, tick + 1);
+    this.table = this.engine.getState();
+    const signedTick = tick + this.R - 1;
+    const head = this.engine.headAt(encodeLog(this.records), this.D, signedTick);
+    this.both("round_result", {
+      round: this.round,
+      tick,
+      entries: entries.map((e) => ({ ball: e.ball, dvx: String(e.dvx), dvy: String(e.dvy) })),
+      commits: this.commits,
+      salts: this.reveals.map((r) => r?.salt ?? null),
+      signedTick,
+      head: hex(head),
+    });
+    this.phase = "gap";
+    this.round++;
+    this.timer = setTimeout(() => (this.round < this.rounds ? this.startRound() : this.endMatch()), ROUND_GAP_MS);
+  }
+
+  /** A side's signature over the head at `tick`: checked, kept, and passed to the other side. */
+  sign(side: number, tick: number, sigHex: string) {
+    const log = encodeLog(this.records.filter((r) => r.tick <= tick));
+    const head = this.engine.headAt(log, this.D, tick);
+    if (!ed25519Verify(this.keys[side], this.engine.signDigest(this.id, tick, head), unhex(sigHex))) throw new Error("signature does not match the log");
+    if (!this.sigs[side] || tick > this.sigs[side]!.tick) this.sigs[side] = { tick, sig: sigHex };
+    this.send(this.players[1 - side], "oppsig", { tick, sig: sigHex });
+  }
+
+  private endMatch() {
+    this.phase = "claim";
+    const truth = this.engine.replay(encodeLog(this.records), this.D, this.D - 1).winner;
+    this.both("final", { truth });
+  }
+
+  evidence() {
+    return { log: Array.from(encodeLog(this.records)), signedTick: null, npcSig: null };
+  }
+}

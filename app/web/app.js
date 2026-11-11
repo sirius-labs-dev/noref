@@ -28,6 +28,9 @@ let replayView = null; // chain-replay visual {records, bytes, tick, end, acc, d
 let view = engine.getState(); // what the table shows when idle
 let es = null;
 let npcPhase = "idle"; // idle | thinking | locked
+const myBall = () => client?.side ?? 0;
+const oppBall = () => 1 - myBall();
+const mySideW = () => client?.mySide ?? SIDE.FIRST;
 let finalMarks = false;
 let chainInfo = null; // {kind: "local"|"testnet", contract, explorer}
 let pc = null; // testnet: the player's own signer (key never leaves this browser)
@@ -88,6 +91,7 @@ async function login(name) {
   $("login").hidden = true;
   connect();
   await refresh();
+  await checkJoin();
 }
 
 $("loginform").addEventListener("submit", async (e) => {
@@ -113,7 +117,8 @@ document.addEventListener("pointerdown", () => sound.unlock(), { once: true });
 function connect() {
   es?.close();
   es = new EventSource(`/api/events?me=${encodeURIComponent(me)}`);
-  for (const k of ["round", "committed", "reveal", "round_result", "final", "chain", "note"]) {
+  es.addEventListener("pvp_start", (ev) => onPvpStart(JSON.parse(ev.data)).catch((e) => note("problem", e.message)));
+  for (const k of ["round", "committed", "reveal", "round_result", "final", "chain", "note", "oppsig"]) {
     es.addEventListener(k, (ev) => onMatchEvent(k, JSON.parse(ev.data)));
   }
   es.addEventListener("feed", (ev) => {
@@ -127,7 +132,7 @@ function onMatchEvent(kind, d) {
   if (kind === "chain" && (!client || d.match !== client.id)) early.push(d);
   if (!client || d.match !== client.id) return;
   if (kind === "round") npcPhase = "thinking";
-  if (kind === "committed" && d.side === 1) {
+  if (kind === "committed" && d.side === client.opp) {
     npcPhase = "locked";
     setStatus(`${client.info.npc.name} has locked in a flick (hidden until you commit). Your move.`);
   }
@@ -155,23 +160,32 @@ async function challenge(npcId) {
       r = await api("/api/opened", { me, id: o.id, tx: o.hash });
     }
     note("you", `You opened match #${r.match.id} vs ${r.match.npc.name} for ${fmt(r.stake)} each.` + (liar ? " This NPC will lie about the result." : ""));
-    clearStage();
-    setPot(2 * r.stake);
-    client = new MatchClient({ engine, api, me, key, info: r.match, aim: waitForAim, log: onClientLog, chain: pc?.opsFor(r.match.id) });
-    early.splice(0).filter((e) => e.match === r.match.id && e.kind !== "create").forEach((e) => note("chain", e.text, e.tx));
-    view = client.table;
-    finalMarks = false;
-    replayView = null;
-    fx.clearTrails();
-    $("npcname").textContent = r.match.npc.name;
-    $("youname").textContent = me.replace(/\.local$/, "").replace(/\.noref\.testnet$/, "");
-    setRound(0, r.match.rounds);
-    updateDist(view);
-    fx.show(`vs ${r.match.npc.name}`, { sub: `${fmt(2 * r.stake)} pot · ${r.match.rounds} rounds`, dur: 1800 });
-    await refresh();
+    await beginMatch(r.match, r.stake);
   } catch (e) {
     note("problem", e.message);
   }
+}
+
+/** Set up the table and our MatchClient for a match against an NPC or a person. */
+async function beginMatch(match, stake) {
+  clearStage();
+  setPot(2 * stake);
+  const pvp = !!match.pvp;
+  client = new MatchClient({ engine, api, me, key, info: match, aim: waitForAim, log: onClientLog, chain: pc?.opsFor(match.id), claimer: pvp && match.side === 0, claimDelayMs: testnet() ? 6000 : 3000 });
+  early.splice(0).filter((e) => e.match === match.id && e.kind !== "create").forEach((e) => note("chain", e.text, e.tx));
+  view = client.table;
+  finalMarks = false;
+  replayView = null;
+  fx.clearTrails();
+  const short = (a) => a.replace(/\.local$/, "").replace(/\.noref\.testnet$/, "");
+  // the scorebug is positional: orange (ball 0, creator) left, blue right
+  $("youname").textContent = pvp ? (match.side === 0 ? "You" : match.players[0]) : short(me);
+  $("npcname").textContent = pvp ? (match.side === 1 ? "You" : match.players[1]) : match.npc.name;
+  setRound(0, match.rounds);
+  updateDist(view);
+  fx.show(`vs ${match.npc.name}`, { sub: `${fmt(2 * stake)} pot · ${match.rounds} rounds${pvp ? ` · you are ${match.side === 0 ? "orange" : "blue"}` : ""}`, dur: 2200 });
+  $("friendlink").hidden = true;
+  await refresh();
 }
 
 function setRound(i, n) {
@@ -185,7 +199,7 @@ function waitForAim(eng, ctx) {
   setRound(ctx.round, ctx.rounds);
   fx.show(ctx.round === ctx.rounds - 1 ? "Final round" : `Round ${ctx.round + 1}`, { dur: 1100 });
   sfx.round();
-  setStatus("Drag back from your orange ball to aim. Release, then Flick.");
+  setStatus(`Drag back from your ${myBall() === 0 ? "orange" : "blue"} ball to aim. Release, then Flick.`);
   setButtons(true);
   return new Promise((resolve) => {
     aimResolve = resolve;
@@ -249,7 +263,7 @@ function onClientLog(kind, text, data) {
     detectHits(before, after);
     anim = { bytes: engine.getState(), tick: data.tick + 1, end: data.tick + client.R, acc: 0 };
     setStatus("Round playing out…");
-    note("check", `Round ${data.tick / client.R + 1}: NPC reveal matches its commit ✓ · NPC signature ✓ · ${client.demo ? "the player" : "you"} countersigned ✓`);
+    note("check", client.info.pvp ? `Round ${data.tick / client.R + 1}: ${client.info.npc.name}'s reveal matches its commit ✓ · you signed the log ✓` : `Round ${data.tick / client.R + 1}: NPC reveal matches its commit ✓ · NPC signature ✓ · ${client.demo ? "the player" : "you"} countersigned ✓`);
     return;
   }
   if (kind === "commit") return note("check", text);
@@ -262,7 +276,7 @@ function onClientLog(kind, text, data) {
     note(data.kind === "replay" ? "replay" : data.kind === "reject" ? "reject" : "chain", text, data.tx);
     if (data.kind === "claim") {
       const honest = data.data.winner === client.verdict;
-      fx.show(data.data.by === me ? "You claim the win" : `${client.info.npc.name}: "${data.data.winner === SIDE.SECOND ? "I won" : data.data.winner === SIDE.FIRST ? "you won" : "draw"}"`, {
+      fx.show(data.data.by === me ? "You claim the win" : `${client.info.npc.name}: "${data.data.winner === SIDE.DRAW ? "draw" : data.data.winner === mySideW() ? "you won" : "I won"}"`, {
         sub: honest ? "matches your replay" : "contradicts your replay",
         color: honest ? "#fff" : "#ffb4a8",
         dur: 1800,
@@ -284,12 +298,12 @@ function onSettle(e, text) {
   setTimeout(() => {
     showVerdict(w, text, e.tx);
     potFlight(w);
-    if (w === SIDE.FIRST) {
+    if (w === mySideW()) {
       fx.confetti(CENTER, CENTER + 20, [COL.a, "#ffd166", "#ffffff", "#06d6a0"]);
       fx.show(client?.demo ? "The player wins" : "You win", { sub: text, color: "#ffd166", dur: 2600 });
       sfx.win();
       setTimeout(() => sfx.coins(), 350);
-    } else if (w === SIDE.SECOND) {
+    } else if (w !== SIDE.DRAW) {
       fx.show(`${client.info.npc.name} wins`, { sub: text, color: "#bcd4ff", dur: 2400 });
       sfx.lose();
     } else {
@@ -312,7 +326,7 @@ function clearStage() {
   $("checks").hidden = true;
 }
 
-const sideLabel = (w) => (w === SIDE.FIRST ? (client?.demo ? "Player won" : "You won") : w === SIDE.SECOND ? `${client?.info?.npc?.name ?? "NPC"} won` : "Draw");
+const sideLabel = (w) => (w === SIDE.DRAW ? "Draw" : w === mySideW() ? (client?.demo ? "Player won" : "You won") : `${client?.info?.npc?.name ?? "NPC"} won`);
 
 /** A claim that contradicts our replay: show it as a card, flipped later by the contract. */
 function showClaimCard(by, winner) {
@@ -393,7 +407,7 @@ function potFlight(w) {
 }
 function showVerdict(w, text, tx) {
   const reviewed = document.body.classList.contains("reviewing");
-  const who = w === SIDE.FIRST ? (client?.demo ? "The player won." : "You won.") : w === SIDE.SECOND ? `${client?.info?.npc?.name ?? "NPC"} won.` : "Draw.";
+  const who = sideLabel(w) + ".";
   const el = $("verdict");
   el.replaceChildren();
   const lab = document.createElement("div");
@@ -597,13 +611,13 @@ function frame(now) {
 
   // balls
   balls.forEach((b, i) => {
-    const glow = i === 0 && aimResolve ? 0.6 + 0.4 * Math.sin(now / 250) : 0;
+    const glow = i === myBall() && aimResolve ? 0.6 + 0.4 * Math.sin(now / 250) : 0;
     drawBall(g, b.x * k, b.y * k, RADIUS * k, ballColor(i), { glow, label: i === 0 ? "A" : i === 1 ? "B" : "" });
   });
 
   // NPC state badge
   if (client && (npcPhase === "thinking" || npcPhase === "locked") && !anim) {
-    const b = balls[1];
+    const b = balls[oppBall()];
     const txt = npcPhase === "locked" ? "🔒 locked" : "thinking" + ".".repeat(1 + (Math.floor(now / 350) % 3));
     g.font = `600 ${Math.round(S / 46)}px ui-sans-serif, system-ui, sans-serif`;
     const w = g.measureText(txt).width + 16;
@@ -645,7 +659,8 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 function drawAim(balls, k) {
-  const a0 = balls[0];
+  const me0 = myBall();
+  const a0 = balls[me0];
   const ang = (aim.angle * Math.PI) / 180;
   const pull = aim.power * 40;
   const hue = 120 - 120 * aim.power;
@@ -666,12 +681,12 @@ function drawAim(balls, k) {
   // predicted path (opponent assumed still)
   engine.setState(view);
   const { dvx, dvy } = flickToImpulse(engine, aim.angle, aim.power);
-  engine.tick(encodeEntries([{ ball: 0, dvx, dvy }]), 0);
+  engine.tick(encodeEntries([{ ball: me0, dvx, dvy }]), 0);
   let prev = engine.balls();
   for (let i = 0; i < 150; i++) {
     engine.tick(new Uint8Array(0), i + 1);
     const bs = engine.balls();
-    const b = bs[0];
+    const b = bs[me0];
     if (i % 3 === 0) {
       g.beginPath();
       g.arc(b.x * k, b.y * k, Math.max(1.5, 2.6 * (1 - i / 150)) * k * 0.6, 0, Math.PI * 2);
@@ -679,8 +694,8 @@ function drawAim(balls, k) {
       g.fill();
     }
     // show where other balls would be pushed
-    for (let j = 1; j < bs.length; j++) {
-      if (Math.hypot(bs[j].vx, bs[j].vy) > 0.5 && Math.hypot(prev[j].vx, prev[j].vy) < 0.5) {
+    for (let j = 0; j < bs.length; j++) {
+      if (j !== me0 && Math.hypot(bs[j].vx, bs[j].vy) > 0.5 && Math.hypot(prev[j].vx, prev[j].vy) < 0.5) {
         g.beginPath();
         g.arc(bs[j].x * k, bs[j].y * k, RADIUS * k + 3, 0, Math.PI * 2);
         g.strokeStyle = "rgba(255,255,255,0.6)";
@@ -693,7 +708,7 @@ function drawAim(balls, k) {
   }
   // final resting spot
   engine.runTicks(400, 200);
-  const end = engine.balls()[0];
+  const end = engine.balls()[me0];
   g.beginPath();
   g.arc(end.x * k, end.y * k, RADIUS * k, 0, Math.PI * 2);
   g.strokeStyle = "rgba(255,190,120,0.8)";
@@ -720,7 +735,7 @@ cv.addEventListener("pointerup", () => (dragging = false));
 function onDrag(ev) {
   const p = toArena(ev);
   engine.setState(view);
-  const b = engine.balls()[0];
+  const b = engine.balls()[myBall()];
   const dx = b.x - p.x;
   const dy = b.y - p.y;
   const len = Math.hypot(dx, dy);
@@ -954,6 +969,117 @@ $("ff").addEventListener("click", async () => {
   }
 });
 
+// ---------- person vs person, by invite link ----------
+let myInvite = null; // the open invite we created: {id}
+const inviteLink = (id) => `${location.origin}${location.pathname}#join=${id}`;
+const joinId = () => {
+  const m = location.hash.match(/^#join=(\d+)$/);
+  return m ? Number(m[1]) : null;
+};
+
+$("friendform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!me) return note("problem", "Pick a name first.");
+  sound.unlock();
+  $("pvpcreate").disabled = true;
+  try {
+    let r = await api("/api/pvp/create", { me, amount: Number($("pvpamt").value) });
+    if (r.open) {
+      setStatus(`Signing: lock ${fmt(r.stake)} in ${r.open.contract}…`);
+      const o = await pc.open(r.open);
+      note("tx", `You signed create: match #${o.id}, ${fmt(r.stake)} locked, open for a friend`, o.hash);
+      r = await api("/api/pvp/opened", { me, id: o.id, tx: o.hash });
+    } else note("you", `You opened match #${r.id} for ${fmt(r.stake)} each, open for a friend.`);
+    myInvite = { id: r.id };
+    $("pvplink").value = inviteLink(r.id);
+    $("friendlink").hidden = false;
+    setStatus("Send the link to a friend. The match starts when they join.");
+  } catch (err) {
+    note("problem", err.message);
+  } finally {
+    $("pvpcreate").disabled = false;
+  }
+});
+$("pvpcopy").addEventListener("click", async () => {
+  $("pvplink").select();
+  try {
+    await navigator.clipboard.writeText($("pvplink").value);
+    $("pvpcopy").textContent = "Copied";
+    setTimeout(() => ($("pvpcopy").textContent = "Copy"), 1500);
+  } catch {}
+});
+$("pvpcancel").addEventListener("click", async () => {
+  if (!myInvite) return;
+  try {
+    if (testnet()) {
+      const r = await pc.call("cancel", { id: String(myInvite.id) });
+      note("tx", `You cancelled match #${myInvite.id}; your stake came back`, r.hash);
+    }
+    await api("/api/pvp/cancel", { me, id: myInvite.id });
+    myInvite = null;
+    $("friendlink").hidden = true;
+    setStatus("Invite cancelled.");
+    await refresh();
+  } catch (err) {
+    note("problem", err.message);
+  }
+});
+
+/** The host's side: the server says the friend joined. */
+async function onPvpStart(d) {
+  myInvite = null;
+  note("chain", `${d.info.npc.name} joined your match #${d.match}. Pot ${fmt(2 * d.stake)}.`);
+  await beginMatch(d.info, d.stake);
+}
+
+/** Opened with #join=<id>: show the invite once we are logged in. */
+async function checkJoin() {
+  const id = joinId();
+  if (id == null) return;
+  const inv = await api(`/api/pvp/invite?id=${id}`).catch(() => null);
+  const card = $("joincard");
+  card.hidden = false;
+  if (!inv?.open) {
+    $("jointext").textContent = `Match #${id} is no longer open`;
+    $("joinbtn").hidden = true;
+    return;
+  }
+  const host = inv.host.replace(/\.local$/, "").replace(/\.noref\.testnet$/, "");
+  $("jointext").innerHTML = "";
+  $("jointext").append(host, " invites you · ");
+  const b = document.createElement("b");
+  b.textContent = `${fmt(inv.stake)} each`;
+  $("jointext").append(b);
+  $("joinbtn").hidden = false;
+  $("joinbtn").disabled = !me || inv.host === me;
+  if (inv.host === me) $("joinbtn").textContent = "This is your own invite";
+  else if (!me) $("joinbtn").textContent = "Pick a name above, then join";
+  else $("joinbtn").textContent = "Lock my stake and play";
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+window.addEventListener("hashchange", () => checkJoin().catch(() => {}));
+$("joinbtn").addEventListener("click", async () => {
+  const id = joinId();
+  if (id == null || !me) return;
+  sound.unlock();
+  $("joinbtn").disabled = true;
+  try {
+    let r = await api("/api/pvp/join", { me, id });
+    if (r.call) {
+      setStatus(`Signing: lock ${fmt(r.stake)} in ${r.call.contract}…`);
+      const t = await pc.call(r.call.method, r.call.args, 30n, r.call.deposit);
+      note("tx", `You signed join: ${fmt(r.stake)} locked in match #${id}`, t.hash);
+      r = await api("/api/pvp/joined", { me, id, tx: t.hash });
+    }
+    $("joincard").hidden = true;
+    history.replaceState(null, "", location.pathname);
+    await beginMatch(r.match, r.stake);
+  } catch (err) {
+    note("problem", err.message);
+    $("joinbtn").disabled = false;
+  }
+});
+
 // ---------- recorded demo: a real lie caught on NEAR testnet ----------
 // Plays back web/demo/lie.json (recorded by `scripts-testnet-e2e.mjs --record`)
 // through the same table, checks and stamps as a live match. The moves are
@@ -1055,5 +1181,6 @@ if (me && localStorage.getItem("noref-name")) {
 } else {
   $("login").hidden = false;
   await refresh();
+  await checkJoin();
 }
 if (location.hash === "#demo") setTimeout(playDemo, 800);

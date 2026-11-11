@@ -123,3 +123,83 @@ test("lying human: NPC disputes with the human's own signature", { timeout: 120_
   assert.equal(settle.data.winner, client.verdict);
   if (client.verdict !== SIDE.FIRST) assert.ok(events.find((e) => e.kind === "replay")?.data.overturned);
 });
+
+/** Two people by invite link. The loser claims a win it did not earn. */
+async function playPvp({ loserLies }) {
+  const engine = [await Engine.load(readFileSync(new URL("../web/engine.wasm", import.meta.url))), await Engine.load(readFileSync(new URL("../web/engine.wasm", import.meta.url)))];
+  const seats = [];
+  for (const [i, name] of ["host" + Date.now().toString(36).slice(-4), "guest" + Date.now().toString(36).slice(-4)].entries()) {
+    const key = await newSessionKey();
+    const { me } = await api("/api/login", { name, key: key.pubHex });
+    const ac = new AbortController();
+    const seat = { key, me, ac, pending: [], lines: [], client: null };
+    await listen(me, (k, d) => {
+      if (k === "pvp_start") seat.start = d;
+      seat.client ? seat.client.handle(k, d) : seat.pending.push([k, d]);
+    }, ac.signal);
+    seats.push(seat);
+  }
+  const [host, guest] = seats;
+  const inv = await api("/api/pvp/create", { me: host.me, amount: 0.5 });
+  const look = await api(`/api/pvp/invite?id=${inv.id}`);
+  assert.equal(look.open, true);
+  const joined = await api("/api/pvp/join", { me: guest.me, id: inv.id });
+  while (!host.start) await new Promise((r) => setTimeout(r, 50));
+  const rngs = [makeRng(11), makeRng(12)];
+  for (const [i, seat] of seats.entries()) {
+    const info = i === 0 ? host.start.info : joined.match;
+    seat.client = new MatchClient({
+      engine: engine[i],
+      api,
+      me: seat.me,
+      key: seat.key,
+      info,
+      claimer: i === 0,
+      claimDelayMs: 1500,
+      log: (kind, text) => seat.lines.push(`[${kind}] ${text}`),
+      aim: async (eng) => {
+        const f = chooseFlick(eng, { ball: i, style: "sniper", skill: i === 0 ? 1 : 0.2, rng: rngs[i] });
+        return f.pass ? null : { angle: f.angle, power: f.power };
+      },
+    });
+    seat.pending.forEach(([k, d]) => seat.client.handle(k, d));
+  }
+  if (loserLies) {
+    // whoever lost claims the win right away, before the creator's honest claim
+    const t = setInterval(async () => {
+      const loser = seats.find((s) => s.client.verdict != null && s.client.verdict !== s.client.mySide && s.client.verdict !== SIDE.DRAW);
+      if (seats.every((s) => s.client.verdict != null)) clearInterval(t);
+      if (loser) {
+        clearInterval(t);
+        await loser.client.falseClaim().catch((e) => loser.lines.push("claim failed " + e.message));
+      }
+    }, 50);
+  }
+  const deadline = Date.now() + 90_000;
+  while (!seats.every((s) => s.client.settled) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
+  await Promise.all(seats.map((s) => s.client.queue));
+  seats.forEach((s) => s.ac.abort());
+  const events = (await api("/api/state?me=" + host.me)).chainEvents.filter((e) => e.match === inv.id);
+  return { seats, events };
+}
+
+test("two people: both replays agree, the creator's claim is confirmed", { timeout: 120_000 }, async () => {
+  const { seats, events } = await playPvp({ loserLies: false });
+  for (const s of seats) assert.deepEqual(s.client.problems, [], s.lines.join("\n"));
+  assert.equal(seats[0].client.verdict, seats[1].client.verdict);
+  const settle = events.find((e) => e.kind === "settle");
+  assert.equal(settle.data.winner, seats[0].client.verdict);
+  assert.ok(!events.some((e) => e.kind === "replay"), "no dispute needed");
+});
+
+test("two people: the loser's false claim is overturned by the winner's dispute", { timeout: 120_000 }, async () => {
+  const { seats, events } = await playPvp({ loserLies: true });
+  const truth = seats[0].client.verdict;
+  if (truth === SIDE.DRAW) return; // nobody to lie
+  for (const s of seats) assert.deepEqual(s.client.problems, [], s.lines.join("\n"));
+  const claim = events.find((e) => e.kind === "claim");
+  assert.notEqual(claim.data.winner, truth, "the loser claimed first");
+  const replay = events.find((e) => e.kind === "replay");
+  assert.ok(replay, "the winner disputed");
+  assert.equal(events.find((e) => e.kind === "settle").data.winner, truth);
+});

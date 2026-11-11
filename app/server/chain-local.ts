@@ -83,6 +83,16 @@ export class LocalChain {
     return id;
   }
 
+  /** Creator withdraws an open match nobody joined (mirrors the contract's `cancel`). */
+  cancel(who: string, id: number) {
+    const m = this.get(id);
+    if (m.phase !== "open") throw new Error("not open");
+    if (who !== m.a) throw new Error("only creator");
+    m.phase = "settled" as any;
+    this.credit(who, m.stake);
+    this.emit(id, "cancel", `${who} cancelled match #${id}; ${m.stake / 1000} NEAR returned`);
+  }
+
   join(who: string, id: number, keyB: string) {
     const m = this.get(id);
     if (m.phase !== "open") throw new Error("not open");
