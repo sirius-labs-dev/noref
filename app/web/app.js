@@ -1,9 +1,9 @@
 // NoRef web client. Plain ES modules, no build step, no dependencies.
-import { Engine, encodeEntries, encodeLog, flickToImpulse, SIDE } from "/shared/engine.js";
-import { MatchClient, newSessionKey, exportSessionKey, importSessionKey } from "/shared/client.js";
-import { fmt } from "/shared/economy.js";
-import { STYLE_INFO } from "/shared/npc.js";
-import { PlayerChain, accountKey } from "/shared/player-chain.js";
+import { Engine, encodeEntries, encodeLog, flickToImpulse, SIDE } from "./shared/engine.js";
+import { MatchClient, newSessionKey, exportSessionKey, importSessionKey } from "./shared/client.js";
+import { fmt } from "./shared/economy.js";
+import { STYLE_INFO } from "./shared/npc.js";
+import { PlayerChain, accountKey } from "./shared/player-chain.js";
 import { Fx, sfx, sound, renderTable, drawBall } from "./fx.js";
 
 const $ = (id) => document.getElementById(id);
@@ -14,7 +14,7 @@ const COL = { a: "rgb(255,122,26)", b: "rgb(47,139,255)", peg: "rgb(176,184,204)
 const ballColor = (i) => (i === 0 ? COL.a : i === 1 ? COL.b : COL.peg);
 const ballRGBA = (i, a) => ballColor(i).replace("rgb", "rgba").replace(")", `,${a})`);
 
-const engine = await Engine.load(await (await fetch("/engine.wasm")).arrayBuffer());
+const engine = await Engine.load(await (await fetch("engine.wasm")).arrayBuffer());
 engine.reset();
 
 let me = localStorage.getItem("noref-me");
@@ -32,6 +32,7 @@ const myBall = () => client?.side ?? 0;
 const oppBall = () => 1 - myBall();
 const mySideW = () => client?.mySide ?? SIDE.FIRST;
 let finalMarks = false;
+let week = null; // a recorded simulated week being replayed: {data, t0, t1, until}
 let chainInfo = null; // {kind: "local"|"testnet", contract, explorer}
 let pc = null; // testnet: the player's own signer (key never leaves this browser)
 const testnet = () => chainInfo?.kind === "testnet";
@@ -961,7 +962,10 @@ function renderChart() {
   const W = c.width;
   const H = c.height;
   ctx.clearRect(0, 0, W, H);
-  const all = state.roster.flatMap((n) => n.history);
+  // a recorded simulated week replays over the live chart (testnet), see playWeek
+  const full = week ? week.data.roster : state.roster;
+  const roster = week ? full.map((n) => ({ ...n, history: n.history.filter((h) => h.t <= week.until), status: n.history.at(-1).t <= week.until ? n.status : "open" })) : full;
+  const all = full.flatMap((n) => n.history);
   if (!all.length) return;
   const t0 = Math.min(...all.map((h) => h.t));
   const t1 = Math.max(...all.map((h) => h.t), t0 + 1);
@@ -978,7 +982,7 @@ function renderChart() {
     ctx.font = "20px ui-monospace, monospace";
     ctx.fillText(((max * i) / 4 / 1000).toFixed(0), 0, y + 6);
   }
-  state.roster.forEach((n, idx) => {
+  roster.forEach((n, idx) => {
     ctx.strokeStyle = COLORS[idx % COLORS.length];
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -989,10 +993,14 @@ function renderChart() {
     });
     ctx.stroke();
   });
-  $("legend").innerHTML = state.roster.map((n, i) => `<span><i style="background:${COLORS[i % COLORS.length]}"></i>${n.name}${n.status === "open" ? "" : " (closed)"}</span>`).join("");
+  $("legend").innerHTML = roster.map((n, i) => `<span><i style="background:${COLORS[i % COLORS.length]}"></i>${n.name}${n.status === "open" ? "" : " (closed)"}</span>`).join("");
   if (testnet()) {
-    $("ff").hidden = true;
-    $("simdays").textContent = `Fighters play each other on-chain every ${chainInfo.ladderMin ?? 15} min. Bankrolls are their real NEAR balances.`;
+    $("ff").hidden = false;
+    $("ff").textContent = week ? "Back to live" : "Replay a simulated week";
+    $("ff").title = week ? "" : "A week of NPC ladder matches recorded from the local build (same economy code, local mirror of the contract), replayed here in a few seconds. Not on testnet.";
+    $("simdays").textContent = week
+      ? `Recorded simulation, not on testnet: day ${Math.min(week.data.days, Math.floor((week.until - week.t0) / 86_400_000) + 1)} of ${week.data.days}, ${week.data.played} ladder matches`
+      : `Fighters play each other on-chain every ${chainInfo.ladderMin ?? 15} min. Bankrolls are their real NEAR balances.`;
   } else $("simdays").textContent = state.simDays ? `${state.simDays} simulated days so far` : "";
 }
 
@@ -1013,10 +1021,48 @@ function addFeed(f) {
 }
 function renderFeed() {
   $("feed").innerHTML = "";
-  state.feed.forEach(addFeed);
+  if (!week) return state.feed.forEach(addFeed);
+  for (const f of week.data.feed.filter((f) => f.t <= week.until)) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="t">sim day ${Math.floor((f.t - week.t0) / 86_400_000) + 1}</span>`;
+    li.append(document.createTextNode(f.text));
+    $("feed").prepend(li);
+  }
+}
+
+// ---------- a recorded simulated week (testnet page) ----------
+// On testnet the ladder plays one real match every 15 minutes, so a week cannot
+// be skipped. The button replays one of a few weeks recorded from the local
+// build with `node scripts-record-week.mjs` (web/demo/week-<n>.json).
+async function playWeek() {
+  const n = 1 + Math.floor(Math.random() * 3);
+  const data = await fetch(`demo/week-${n}.json`).then((r) => r.json());
+  const ts = data.roster.flatMap((r) => r.history.map((h) => h.t));
+  const t0 = Math.min(...ts);
+  const t1 = Math.max(...ts);
+  week = { data, t0, t1, until: t0 };
+  const start = performance.now();
+  const DUR = 8000;
+  const step = () => {
+    if (!week || week.data !== data) return;
+    const k = Math.min(1, (performance.now() - start) / DUR);
+    week.until = t0 + k * (t1 - t0);
+    renderChart();
+    renderFeed();
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 $("ff").addEventListener("click", async () => {
+  if (testnet()) {
+    if (week) {
+      week = null;
+      renderChart();
+      renderFeed();
+    } else await playWeek().catch((e) => note("problem", e.message));
+    return;
+  }
   $("ff").disabled = true;
   $("ff").textContent = "Simulating…";
   try {

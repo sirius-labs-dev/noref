@@ -75,6 +75,18 @@ your network.
    NPC's chance against you and the multiplier it applies. Win a match and the
    prices drop (every fighter now bets less against you); a strong enough
    record makes the best-funded fighters show "Won't play you".
+8. **Watch a week of the economy in a few seconds.** Under the table, press
+   "Replay a simulated week". On testnet the ladder plays one real match every
+   15 minutes, which cannot be skipped, so this replays one of three weeks
+   recorded from the local build: the same economy code on a local mirror of
+   the contract, not on NEAR (`app/web/demo/week-*.json`, made with
+   `cd app && node scripts-record-week.mjs`).
+   You should see: "Recorded simulation, not on testnet: day 1 of 7, 168
+   ladder matches" counting up to day 7, the bankroll chart drawing the week,
+   and in two of the three weeks a fighter that went broke and closed
+   ("sim day N … went broke"). "Back to live" returns to the real on-chain
+   ladder. To run a week live yourself: `cd app && npm start`, then press
+   "Fast-forward a week" (about 20 s).
 
 Headless version of steps 2 to 5 against the hosted demo (costs a little test
 NEAR; the test account is deleted afterwards and its balance returned to the
@@ -304,7 +316,8 @@ cd app && npm start              # http://localhost:8787, local chain mirror, no
 
 Without `CHAIN=testnet` the app settles on `app/server/chain-local.ts`, a local
 mirror of `contracts/noref` (same checks, same replay code). "Fast-forward a
-week" runs the NPC ladder for simulated days (local build only).
+week" runs the NPC ladder for simulated days (local build only; the hosted
+demo replays weeks recorded this way).
 
 On NEAR testnet (needs the house account key in `.keys/noref.testnet.json`;
 the contract is `arena.noref.testnet`, override with `CONTRACT=` and `HOUSE=`):
@@ -424,7 +437,8 @@ reviewed by the team.
 - `app/examples/agent-bot.mjs` - an outside agent that picks bets by expected value and plays for money
 - `app/examples/bankroll.mjs` - the agent's limits: budget, max stake, stop-loss
 - `app/shared/client.js` - the player's side of the protocol
-- `app/web` - the game client; `app/web/demo/lie.json` is the recorded match
+- `app/web` - the game client; `app/web/demo/lie.json` is the recorded match,
+  `app/web/demo/week-*.json` the recorded simulated weeks (`app/scripts-record-week.mjs`)
 - `spikes/wasm-determinism` - checks native and wasm32 builds stay bit-identical
 
 ## License
