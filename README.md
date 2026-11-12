@@ -19,6 +19,21 @@ by that server itself at https://noref.63-183-239-145.sslip.io:80/ (HTTPS on
 port 80, so the `:80` is part of the link) if `vercel.app` is unreachable from
 your network.
 
+> **Quick check for reviewers** (no network, no npm install, no keys).
+> Needs Node 23.6+ and, for the Rust part, Rust 1.94 with the
+> `wasm32-unknown-unknown` target. A built `app/web/engine.wasm` is committed,
+> so the app runs without Rust.
+>
+> ```sh
+> cd app && npm run test:quick   # 11 tests, ~1 s: pricing, bankroll limits, replay vector
+> cd app && npm run test:e2e     # 5 full local matches, ~2 min: honest, lying NPC, lying player, two people with and without a lie
+> cargo test -p tick-core -p tick-merkle -p arena -p noref-rules   # 30 Rust tests (first build takes a few minutes)
+> cd app && npm start            # http://localhost:8787, local chain mirror; then follow "Try it" below
+> ```
+>
+> Every on-chain claim in this README can be checked against NEAR testnet RPC
+> without a browser: see [Verify it yourself](#verify-it-yourself).
+
 ## Try it (about 3 minutes, no wallet, no install)
 
 1. **Watch a lie get caught.** Open
@@ -299,8 +314,9 @@ cd app && CHAIN=testnet PORT=8789 DATA=./data/testnet node server/main.ts
 ```
 
 Tests (all pass from a clean copy: 30 Rust tests, 5 contract flow tests in a
-NEAR sandbox, 11 app tests including five full local matches: honest, lying
-NPC, lying player, and two people with and without a lie):
+NEAR sandbox, 16 app tests including five full local matches: honest, lying
+NPC, lying player, and two people with and without a lie; `npm test` runs all
+16, `npm run test:quick` the 11 fast ones, `npm run test:e2e` the five matches):
 
 ```
 cargo test -p tick-core -p tick-merkle -p arena -p noref-rules
