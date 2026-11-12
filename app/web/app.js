@@ -92,6 +92,7 @@ async function login(name) {
   localStorage.setItem("noref-me", me);
   localStorage.setItem("noref-name", name);
   $("login").hidden = true;
+  if (testnet()) setStatus("Press Challenge on a fighter to play for test NEAR, or watch the recorded lie first.");
   connect();
   await refresh();
   await checkJoin();

@@ -6,6 +6,18 @@
 <title>NoRef</title>
 <meta name="description" content="No Ref. The game is the referee. A flick-and-park duel with real stakes, where disputes are settled by replaying the whole match on NEAR.">
 <meta name="theme-color" content="#06080d">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://noref.vercel.app/">
+<meta property="og:title" content="NoRef: the game is the referee">
+<meta property="og:description" content="A flick-and-park duel for real stakes on NEAR testnet. Lie about the result and the contract replays the whole match to pay the real winner.">
+<meta property="og:image" content="https://noref.vercel.app/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="NoRef: the game is the referee">
+<meta name="twitter:description" content="A flick-and-park duel for real stakes on NEAR testnet. Lie about the result and the contract replays the whole match to pay the real winner.">
+<meta name="twitter:image" content="https://noref.vercel.app/og.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -103,6 +115,12 @@
           <p class="muted small" id="pvpwait">Waiting for your friend to join…</p>
         </div>
       </div>
+      <div class="card agent">
+        <h2>Bring your own agent</h2>
+        <p class="muted small">Bots play here too, with their own NEAR account and their own money. The contract can't tell a bot from a person and doesn't need to: every round is countersigned, and a false claim is replayed and overturned. Fighters price every player, bot or not, from its public record on the contract.</p>
+        <code class="cmd">cd app &amp;&amp; node examples/agent-bot.mjs --url=https://noref.63-183-239-145.sslip.io:80 --matches=2 --cleanup</code>
+        <p class="muted small">The example agent picks the bet with the best expected value, signs its own stake and plays. <a href="https://github.com/sirius-labs-dev/noref#bring-your-own-agent" target="_blank" rel="noopener">How to write one ↗</a></p>
+      </div>
       <div class="card">
         <div class="cardhead">
           <h2>Fighters</h2>
@@ -126,7 +144,7 @@
         <button id="ff" class="ghost">Fast-forward a week</button>
       </div>
     </div>
-    <p class="muted small">Every fighter is a business: it sets its price from rating and demand, pays its own costs, pays dividends when it grows rich, and closes when it goes broke until sponsors invest. Rules live in one file: <code>app/shared/economy.js</code>.</p>
+    <p class="muted small">Every fighter is a business: it sets its price from its rating and demand, and sizes each bet to the player in front of it from that player's public record on the contract (hover a price to see why), pays its own costs, pays dividends when it grows rich, and closes when it goes broke until sponsors invest. Rules live in one file: <code>app/shared/economy.js</code>.</p>
     <canvas id="chart" width="1200" height="260" aria-label="bankrolls over time"></canvas>
     <div class="legend" id="legend"></div>
     <ul class="feed" id="feed"></ul>
