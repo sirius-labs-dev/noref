@@ -162,12 +162,47 @@ node examples/agent-bot.mjs --url=https://noref.63-183-239-145.sslip.io:80 --mat
 
 You should see, for each match: the price every NPC quotes this bot (from its
 own on-chain record), the bot's estimate of its chance and the expected value
-of each bet, the NPC it picks (highest positive EV, at most a fifth of its
-balance, never below its stop-loss), its own `create` transaction, the NPC
-joining, its replay of all 1080 ticks, and the payout. The feed on the page
-shows it as `(bot)`. `--cleanup` deletes the bot's account at the end and
-returns its balance to the house. Against a local server (`npm start`) it
-needs no testnet NEAR: `--url=http://127.0.0.1:8787`.
+of each bet, the NPC it picks (highest positive EV inside its limits, see
+below), its own `create` transaction, the NPC joining, its replay of all 1080
+ticks, and the payout. The feed on the page shows it as `(bot)`. `--cleanup`
+deletes the bot's account at the end and returns its balance to the house.
+Against a local server (`npm start`) it needs no testnet NEAR:
+`--url=http://127.0.0.1:8787`.
+
+### Bot bankroll limits
+
+An agent that bets needs limits its owner sets, and the owner should know
+which of them the agent could ignore. The bot takes four
+(`app/examples/bankroll.mjs`, tested in `app/test/bankroll.test.js`):
+
+```sh
+node examples/agent-bot.mjs --url=https://noref.63-183-239-145.sslip.io:80 \
+  --budget=0.4 --max-stake=0.1 --stop-loss=0.15 --matches=3 --owner=<you>.testnet --cleanup
+```
+
+| Limit | What it means | Who enforces it |
+|---|---|---|
+| `--budget` | the most the agent can lose | **NEAR.** Before it plays, the bot sends everything above budget + 0.05 NEAR gas reserve back to the house. It holds only its own account's key, so it cannot lose more than that account holds. |
+| `--max-stake` | the largest single bet | the bot's own code |
+| `--stop-loss` | stop once down this much from the start; skip a bet that could pass it | the bot's own code |
+| `--matches` | at most this many matches | the bot's own code |
+
+Every skipped bet is logged with its reason (`skip: over max-stake 0.100
+NEAR`, `skip: losing it would pass the stop-loss (0.079 NEAR left)`). With
+`--owner`, at the end only the profit goes to the owner; the starting money
+came from the house faucet and goes back there when the account is deleted.
+Against a local server there is no account to trim, so there the budget is
+also only checked by the bot.
+
+Live run on testnet, 12 Nov 2026, with the command above (owner set to the
+house for the test): the bot started at 0.449 NEAR (0.4 budget + reserve),
+skipped Vex, Moss and Rook every round as over max-stake, played matches
+#100, #101 and #102 against Pip and Brick, ended at 0.678 NEAR, sent the
+0.229 NEAR profit to the owner (`FD6revc2TX6LKrHFkw4ZP59Jkn2AbDFsRvgtQoViSVu5`)
+and deleted its account (`DQpZ1wxt6rb7MmhbeyuX1gAM1mTZCsX6Pgr9TDcvvkDJ`). An
+earlier run, before the budget step read a fresh balance, lost match #97,
+saw Brick and Dot skipped because they could pass the stop-loss, and ended
+down about 0.09 NEAR.
 
 How it works, for writing your own: `POST /api/login {name, key, account,
 bot: true}` makes `<name>.noref.testnet` with your public key (the server
@@ -294,6 +329,9 @@ Real, and checkable on testnet.nearblocks.io:
 Not claimed:
 
 - Testnet only. Test NEAR has no value. No mainnet deployment, no audit.
+- Agent limits: only the budget is enforced by NEAR (the account balance).
+  Max-stake, stop-loss and the match count are the bot's own code; the
+  contract is locked and knows nothing about them.
 - The NPC fighters are bots run by our server, which holds their keys. The
   contract guarantees that an NPC cannot win a match it lost; it does not make
   the NPCs independent players.
@@ -368,6 +406,7 @@ reviewed by the team.
 - `app/shared/economy.js` - every economy rule, in one file
 - `app/shared/npc.js` - NPC brains
 - `app/examples/agent-bot.mjs` - an outside agent that picks bets by expected value and plays for money
+- `app/examples/bankroll.mjs` - the agent's limits: budget, max stake, stop-loss
 - `app/shared/client.js` - the player's side of the protocol
 - `app/web` - the game client; `app/web/demo/lie.json` is the recorded match
 - `spikes/wasm-determinism` - checks native and wasm32 builds stay bit-identical

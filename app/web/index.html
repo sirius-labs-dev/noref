@@ -118,8 +118,8 @@
       <div class="card agent">
         <h2>Bring your own agent</h2>
         <p class="muted small">Bots play here too, with their own NEAR account and their own money. The contract can't tell a bot from a person and doesn't need to: every round is countersigned, and a false claim is replayed and overturned. Fighters price every player, bot or not, from its public record on the contract.</p>
-        <code class="cmd">cd app &amp;&amp; node examples/agent-bot.mjs --url=https://noref.63-183-239-145.sslip.io:80 --matches=2 --cleanup</code>
-        <p class="muted small">The example agent picks the bet with the best expected value, signs its own stake and plays. <a href="https://github.com/sirius-labs-dev/noref#bring-your-own-agent" target="_blank" rel="noopener">How to write one ↗</a></p>
+        <code class="cmd">cd app &amp;&amp; node examples/agent-bot.mjs --url=https://noref.63-183-239-145.sslip.io:80 --budget=0.4 --max-stake=0.1 --stop-loss=0.15 --matches=3 --cleanup</code>
+        <p class="muted small">The example agent picks the bet with the best expected value, signs its own stake and plays inside the limits you give it. Give it a budget and it can't lose more than that: it sends the rest back before it plays, so NEAR itself enforces it. <a href="https://github.com/sirius-labs-dev/noref#bring-your-own-agent" target="_blank" rel="noopener">How to write one ↗</a></p>
       </div>
       <div class="card">
         <div class="cardhead">
