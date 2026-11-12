@@ -64,6 +64,35 @@ export function tally(account, finals) {
   return r;
 }
 
+/**
+ * Standings for the Gauntlet (beat all six fighters) and the leaderboard,
+ * from settled matches on the contract. `npcs` maps an NPC's account to its
+ * name; every other account is a player. Anyone can recompute this from the
+ * contract's `get_match` views.
+ */
+export function standings(finals, npcs, exclude = []) {
+  const rows = new Map();
+  const row = (acct) => {
+    if (!rows.has(acct)) rows.set(acct, { account: acct, wins: 0, losses: 0, draws: 0, liesCaught: 0, beaten: [] });
+    return rows.get(acct);
+  };
+  for (const f of finals) {
+    if (!f.settled || f.result == null || !f.b) continue;
+    for (const [me, side, them] of [[f.a, 1, f.b], [f.b, 2, f.a]]) {
+      if (npcs.has(me) || exclude.includes(me)) continue;
+      const r = row(me);
+      if (f.result === 0) r.draws++;
+      else if (f.result === side) {
+        r.wins++;
+        const name = npcs.get(them);
+        if (name && !r.beaten.includes(name)) r.beaten.push(name);
+      } else r.losses++;
+      if (f.claimBy === me && f.claimWinner !== f.result) r.liesCaught++;
+    }
+  }
+  return [...rows.values()].sort((x, y) => y.beaten.length - x.beaten.length || y.wins - x.wins || x.losses - y.losses);
+}
+
 /** Form rating from a public record: 1200 + 25 per net win, kept within 800..1800. */
 export function formRating(rec) {
   return Math.max(800, Math.min(1800, 1200 + FORM_STEP * (rec.wins - rec.losses)));

@@ -319,6 +319,12 @@ export class TestnetChain {
     return eco.tally(account, [...this.done.entries()].filter(([id]) => id >= from).map(([, f]) => f));
   }
 
+  /** Every settled or cancelled match among the last `depth` on the contract (cached once final). */
+  async finals(depth = 500) {
+    const { from } = await this.scan("", depth);
+    return [...this.done.entries()].filter(([id]) => id >= from).map(([, f]) => f);
+  }
+
   /** Read the match from the contract and emit events for whatever changed. */
   async refresh(id: number, first = false) {
     let c = await this.near.view(this.contract, "get_match", { id: String(id) });

@@ -135,6 +135,7 @@ function connect() {
 
 const early = []; // chain events that arrive before the match client exists (create, join)
 function onMatchEvent(kind, d) {
+  if (kind === "chain" && d.kind === "settle") setTimeout(() => renderBoard(true).catch(() => {}), 1500);
   if (kind === "chain" && (!client || d.match !== client.id)) early.push(d);
   if (!client || d.match !== client.id) return;
   if (kind === "round") npcPhase = "thinking";
@@ -762,6 +763,8 @@ async function refresh() {
   chainInfo = state.chain;
   renderFaucet();
   renderBadge();
+  $("hero").hidden = !!me;
+  renderBoard().catch(() => {});
   renderAccount();
   renderRoster();
   renderChart();
@@ -837,6 +840,8 @@ function renderAccount() {
   a.innerHTML = testnet()
     ? `<a href="${chainInfo.explorer}/address/${state.me.id}" target="_blank" rel="noopener"><b>${state.me.id}</b></a><span>${fmt(state.me.balance)}</span>`
     : `<b>${state.me.id}</b><span>${fmt(state.me.balance)}</span>`;
+  const owned = state.roster.filter((n) => (n.holders[state.me.id] ?? 0) > 0);
+  if (owned.length) a.insertAdjacentHTML("beforeend", `<span class="port" title="What your shares in fighters are worth now">backing ${owned.length} · ${fmt(owned.reduce((t, n) => t + Math.floor(n.holders[state.me.id] * n.sharePrice), 0))}</span>`);
   // a win: count the balance up and show the gain
   if (from != null && to > from) {
     const span = a.querySelector("span");
@@ -888,12 +893,13 @@ function renderRoster() {
     li.innerHTML = `
       <div><span class="name">${n.name}</span>${n.status === "open" ? "" : '<span class="pill closed">closed</span>'}
         <div class="style">${n.style} · ${STYLE_INFO[n.style]}</div>
+        ${mine > 0 ? `<div class="mine">you own ${((100 * mine) / n.shares).toFixed(1)}% · worth ${fmt(Math.floor(mine * n.sharePrice))}</div>` : ""}
         <div class="meta">rating ${n.rating} · ${n.wins}W ${n.losses}L ${n.draws}D · bankroll ${testnet() && n.account ? `<a href="${chainInfo.explorer}/address/${n.account}" target="_blank" rel="noopener" title="its real NEAR account">${fmt(n.bankroll)} ↗</a>` : fmt(n.bankroll)}</div>
       </div>
       <div class="price">asks ${fmt(n.stake)}${tr ? `<span class="trend ${tr.pct >= 0 ? "up" : "down"}">${tr.pct >= 0 ? "▲" : "▼"} ${Math.abs(tr.pct).toFixed(0)}%</span>${tr.svg}` : ""}</div>
       <div class="acts">
         <button class="small" data-act="fight" ${n.status !== "open" || n.declined || busy || !state.me ? "disabled" : ""} ${n.declined ? `title="${n.why[n.why.length - 1].replace(/"/g, "&quot;")}"` : ""}>${n.declined ? "Won't play you" : "Challenge"}</button>
-        <button class="small ghost" data-act="back" ${!state.me ? "disabled" : ""}>Back with ${BACK()} NEAR</button>
+        <button class="small ghost" data-act="back" ${!state.me ? "disabled" : ""} title="Buy shares of ${n.name}'s bankroll: its wins raise your share value, and it pays dividends to backers when it grows rich. Cash out any time.">Back with ${BACK()} NEAR</button>
         ${mine > 0 ? `<button class="small ghost" data-act="cash">Cash out ${mine.toFixed(1)} sh (${fmt(Math.floor(mine * n.sharePrice))})</button>` : ""}
       </div>`;
     const price = li.querySelector(".price");
@@ -1276,6 +1282,42 @@ async function playDemo() {
 $("demobtn").addEventListener("click", () => {
   sound.unlock();
   playDemo();
+});
+
+// ---------- Gauntlet: beat all six fighters; the board ----------
+let boardAt = 0;
+async function renderBoard(force = false) {
+  if (!force && Date.now() - boardAt < 8000) return;
+  boardAt = Date.now();
+  const b = await api(`/api/leaderboard?me=${encodeURIComponent(me ?? "")}`);
+  const beaten = b.me?.beaten ?? [];
+  $("gprog").textContent = me ? `you: ${beaten.length}/${b.fighters.length}${beaten.length === b.fighters.length ? " · complete" : ""}` : `${b.players} player(s) so far`;
+  $("gchips").innerHTML = b.fighters
+    .map((name, i) => `<li class="${beaten.includes(name) ? "won" : ""}" style="--c:${COLORS[i % COLORS.length]}">${beaten.includes(name) ? "✓ " : ""}${name}</li>`)
+    .join("");
+  const short = (a) => a.replace(/\.noref\.testnet$/, "");
+  $("board").innerHTML = b.top.length
+    ? b.top
+        .map((r) => `<li class="${r.account === me ? "me" : ""}">${short(r.account)}${r.bot ? " (bot)" : ""} <span class="g">${r.beaten.length}/${b.fighters.length}</span> · ${r.wins}W ${r.losses}L${r.liesCaught ? ` · ${r.liesCaught} lie${r.liesCaught > 1 ? "s" : ""} caught` : ""}</li>`)
+        .join("")
+    : `<li class="muted">No finished matches yet.</li>`;
+  $("board").title = `From ${b.from}.`;
+}
+
+// ---------- first screen ----------
+$("herodemo").addEventListener("click", () => {
+  sound.unlock();
+  $("table").scrollIntoView({ behavior: "smooth", block: "center" });
+  playDemo();
+});
+$("heroplay").addEventListener("click", () => {
+  $("login").hidden = false;
+  $("login").scrollIntoView({ behavior: "smooth", block: "center" });
+  $("name").focus({ preventScroll: true });
+});
+$("heroweek").addEventListener("click", () => {
+  document.querySelector(".economy").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!week) $("ff").click();
 });
 
 // ---------- boot ----------

@@ -85,6 +85,10 @@ export class LocalChain {
   }
 
   /** The account's public record from settled matches (same rules as the testnet adapter). */
+  finals() {
+    return this.matches.map((m) => ({ a: m.a, b: m.b, settled: m.phase === "settled", result: m.result, claimBy: m.claim?.by ?? null, claimWinner: m.claim?.winner ?? null }));
+  }
+
   async record(account: string) {
     return eco.tally(account, this.matches.map((m) => ({ a: m.a, b: m.b, settled: m.phase === "settled", result: m.result, claimBy: m.claim?.by ?? null, claimWinner: m.claim?.winner ?? null })));
   }

@@ -80,3 +80,23 @@ test("tally reads wins, losses and overturned claims", () => {
   const r = eco.tally("me", [f("me", "x", 1), f("x", "me", 1, "me", 2), f("me", "y", 0), { ...f("me", null, null), settled: false }]);
   assert.deepEqual(r, { wins: 1, losses: 1, draws: 1, liesCaught: 1 });
 });
+
+test("standings: Gauntlet counts each fighter beaten once; NPC-only and house matches are not players", () => {
+  const npcs = new Map([["npc-vex", "Vex"], ["npc-pip", "Pip"]]);
+  const f = (a, b, result, extra = {}) => ({ a, b, settled: true, result, claimBy: null, claimWinner: null, ...extra });
+  const rows = eco.standings(
+    [
+      f("ann", "npc-vex", 1),
+      f("ann", "npc-vex", 1), // second win over Vex: one more win, not one more fighter
+      f("npc-pip", "ann", 1), // Pip won
+      f("bob", "npc-pip", 1, { claimBy: "bob", claimWinner: 1 }),
+      f("npc-vex", "npc-pip", 2), // ladder: no player
+      f("house", "npc-vex", 1),
+      { a: "cat", b: null, settled: false, result: null }, // cancelled: ignored
+    ],
+    npcs,
+    ["house"],
+  );
+  assert.deepEqual(rows.map((r) => [r.account, r.beaten, r.wins, r.losses]), [["ann", ["Vex"], 2, 1], ["bob", ["Pip"], 1, 0]]);
+  assert.equal(rows[1].liesCaught, 0); // bob's claim was true
+});

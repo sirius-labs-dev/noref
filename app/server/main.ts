@@ -18,6 +18,7 @@
 //   POST /api/match/:id/confirm {me}
 //   POST /api/match/:id/dispute {me, log, signedTick, sig}   (log/sig hex)
 //   GET  /api/match/:id/evidence
+//   GET  /api/leaderboard?me=                  -> Gauntlet progress + top players, from settled matches
 //   POST /api/sponsor {me, npc, amount} | /api/cashout {me, npc, shares}
 //   POST /api/fastforward {days}               -> runs the NPC ladder for simulated days
 
@@ -122,6 +123,16 @@ async function form(me: string) {
   formCache.set(me, { t: Date.now(), v });
   return v;
 }
+// ---- Gauntlet + leaderboard: who has beaten which fighters, from the contract ----
+let boardCache: { t: number; v: any[] } | null = null;
+async function board() {
+  if (boardCache && Date.now() - boardCache.t < 30_000) return boardCache.v;
+  const npcs = new Map<string, string>(world.roster.map((n: any) => [TESTNET ? chain.acct(n.id) : n.id, n.name]));
+  const rows = eco.standings(await chain.finals(), npcs, [HOUSE]).map((r: any) => ({ ...r, bot: !!world.players[r.account]?.bot }));
+  boardCache = { t: Date.now(), v: rows };
+  return rows;
+}
+
 const tag = (me: string) => (world.players[me]?.bot ? `${me} (bot)` : me);
 
 chain.onEvent = (e) => {
@@ -130,7 +141,10 @@ chain.onEvent = (e) => {
     sendTo(m.a, "chain", e);
     if (m.b && !npcById(m.b)) sendTo(m.b, "chain", e);
   }
-  if (e.kind === "settle") onSettled(e.match);
+  if (e.kind === "settle") {
+    boardCache = null;
+    onSettled(e.match);
+  }
   persist();
 };
 
@@ -140,6 +154,7 @@ function onSettled(id: number) {
   if (lm?.pvp) {
     const [a, b] = lm.players.map((x: string) => PvpMatch.short(x) + (world.players[x]?.bot ? " (bot)" : ""));
     lm.players.forEach((x: string) => formCache.delete(x));
+    boardCache = null;
     const r = m.replayed ? (m.replayed.winner !== m.claim?.winner ? " after a replay overturned a false claim" : " after a replay confirmed the claim") : "";
     feed(`${a} vs ${b}: ${m.result === SIDE.DRAW ? "draw" : (m.result === SIDE.FIRST ? a : b) + " won"} ${eco.fmt(2 * m.stake)} pot${r}`);
     live.delete(id);
@@ -159,6 +174,7 @@ function onSettled(id: number) {
   const events = eco.recordResult(npc, { delta: payout - esc.stake, score, oppRating: esc.oppRating ?? 1200, now: nowW(), upkeep: TESTNET ? 0 : eco.UPKEEP });
   const humanId = m.a === npc.id ? m.b : m.a;
   formCache.delete(humanId);
+  boardCache = null;
   const human = tag(humanId);
   const replayNote = m.replayed ? (m.replayed.winner !== m.claim?.winner ? " after a replay overturned a false claim" : " after a replay confirmed the claim") : "";
   feed(`${human} vs ${npc.name}: ${m.result === SIDE.DRAW ? "draw" : score === 1 ? npc.name + " won" : human + " won"} ${eco.fmt(2 * m.stake)} pot${replayNote}`);
@@ -356,6 +372,7 @@ function rosterView(now = nowW(), opp: any = null) {
       why: p.why,
       declined: p.declined,
       sharePrice: eco.sharePrice(n),
+      shares: n.shares,
       holders: n.holders,
       history: sample(n.history, 240),
     };
@@ -460,6 +477,11 @@ async function api(req: any, url: URL): Promise<unknown> {
       stuck.push({ ...base, action: "refund", why: "nobody reported a result", readyAt: end + 10 * 60_000 });
     }
     return { stuck, now };
+  }
+
+  if (p === "/api/leaderboard") {
+    const rows = await board();
+    return { fighters: world.roster.map((n: any) => n.name), top: rows.slice(0, 10), me: q.me ? rows.find((r: any) => r.account === q.me) ?? null : null, players: rows.length, from: "settled matches on " + (TESTNET ? CONTRACT : "the local chain") };
   }
 
   if (p === "/api/state") {

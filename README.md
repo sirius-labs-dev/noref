@@ -25,7 +25,7 @@ your network.
 > so the app runs without Rust.
 >
 > ```sh
-> cd app && npm run test:quick   # 11 tests, ~1 s: pricing, bankroll limits, replay vector
+> cd app && npm run test:quick   # 12 tests, ~1 s: pricing, Gauntlet standings, bankroll limits, replay vector
 > cd app && npm run test:e2e     # 5 full local matches, ~2 min: honest, lying NPC, lying player, two people with and without a lie
 > cargo test -p tick-core -p tick-merkle -p arena -p noref-rules   # 30 Rust tests (first build takes a few minutes)
 > cd app && npm start            # http://localhost:8787, local chain mirror; then follow "Try it" below
@@ -87,6 +87,23 @@ your network.
    ("sim day N … went broke"). "Back to live" returns to the real on-chain
    ladder. To run a week live yourself: `cd app && npm start`, then press
    "Fast-forward a week" (about 20 s).
+9. **Own a piece of a fighter.** Logged in, press "Back with 0.1 NEAR" on a
+   fighter. You sign a real transfer into that fighter's own account.
+   You should see "you own N% · worth X" on its card, "backing 1 · X" next to
+   your balance, and the backing in the feed. Its wins raise what your shares
+   are worth; when its bankroll passes 3 NEAR it pays dividends to its
+   backers (a real transfer from its account, with a `tx ↗` in the feed).
+   "Cash out" pays you back from the fighter's account.
+10. **Run the Gauntlet.** The Gauntlet card lists the six fighters; each one
+   you beat gets a ✓, and the board ranks players by fighters beaten, then
+   wins. It is computed from settled matches on the contract
+   (`GET /api/leaderboard`), so it shows bots too, labelled `(bot)`.
+
+The game loop, in the track's terms: every few seconds you aim and flick;
+every few minutes a match settles and every fighter re-prices you from your
+record; across a session you work through the Gauntlet, and you can put your
+winnings into the fighters you think will grow, while the ladder moves their
+money even when you are away.
 
 Headless version of steps 2 to 5 against the hosted demo (costs a little test
 NEAR; the test account is deleted afterwards and its balance returned to the
@@ -165,9 +182,11 @@ Every rule is in `app/shared/economy.js`.
 - **The ladder never stops.** Every 15 minutes two NPCs play a real match on
   the contract (`create`, `join`, `claim`, `confirm`), so money moves between
   them even when nobody is playing. Gas is their upkeep.
-- **Sponsors.** Anyone can back a fighter with a real transfer and get shares;
-  wins raise the share value, losses lower it; cash out any time (the NPC pays
-  you from its account).
+- **Player-owned fighters.** Anyone can back a fighter with a real transfer
+  into its account and get shares of its bankroll; wins raise the share value,
+  losses lower it; cash out any time (the NPC pays you from its account). The
+  money is on-chain in the fighter's account; the share register is kept by
+  our server (see "What is real").
 - **Dividends.** A fighter whose bankroll passes 3 NEAR pays the excess to its
   backers, pro rata to their shares.
 - **Bankruptcy.** A fighter that can no longer stake the minimum closes. If it
@@ -327,9 +346,9 @@ cd app && CHAIN=testnet PORT=8789 DATA=./data/testnet node server/main.ts
 ```
 
 Tests (all pass from a clean copy: 30 Rust tests, 5 contract flow tests in a
-NEAR sandbox, 16 app tests including five full local matches: honest, lying
+NEAR sandbox, 17 app tests including five full local matches: honest, lying
 NPC, lying player, and two people with and without a lie; `npm test` runs all
-16, `npm run test:quick` the 11 fast ones, `npm run test:e2e` the five matches):
+17, `npm run test:quick` the 12 fast ones, `npm run test:e2e` the five matches):
 
 ```
 cargo test -p tick-core -p tick-merkle -p arena -p noref-rules
@@ -358,6 +377,9 @@ Real, and checkable on testnet.nearblocks.io:
 Not claimed:
 
 - Testnet only. Test NEAR has no value. No mainnet deployment, no audit.
+- Shares in fighters: the transfers in, the dividends and the cash-outs are
+  real testnet transactions, but who holds how many shares is recorded by our
+  server, not by a contract.
 - Agent limits: only the budget is enforced by NEAR (the account balance).
   Max-stake, stop-loss and the match count are the bot's own code; the
   contract is locked and knows nothing about them.
