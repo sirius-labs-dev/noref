@@ -1,0 +1,4 @@
+[toolchain]
+# the deployed vaults were built with this compiler: keep it to get the same bytes
+channel = "1.94.1"
+targets = ["wasm32-unknown-unknown"]

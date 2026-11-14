@@ -137,11 +137,16 @@ export function askStake(npc, now = Date.now(), opp = null) {
   }
   // a fighter with a vault contract: the contract checks the same 1/10 rule
   // itself; stay under it with room for the gas its own call reserves
-  if (npc.vaultMax != null && stake > npc.vaultMax * 0.85) {
-    stake = Math.floor(npc.vaultMax * 0.85);
+  // (the gas its own call prepays leaves the vault's balance during the call:
+  // up to ~0.06 NEAR, so keep 8 milliNEAR of the limit spare, and round down)
+  let floorIt = stake >= cap;
+  const vaultCap = npc.vaultMax != null ? Math.min(npc.vaultMax * 0.9, npc.vaultMax - 8) : Infinity;
+  if (stake > vaultCap) {
+    stake = vaultCap;
+    floorIt = true;
     why.push(`kept under its vault contract's limit (${fmt(npc.vaultMax)})`);
   }
-  stake = Math.max(MIN_STAKE, (stake >= cap ? Math.floor(stake / 10) : Math.round(stake / 10)) * 10);
+  stake = Math.max(MIN_STAKE, (floorIt ? Math.floor(stake / 10) : Math.round(stake / 10)) * 10);
   if (npc.bankroll < BROKE_BELOW) why.push(`closed: bankroll below ${fmt(BROKE_BELOW)}`);
   return { stake, why, declined };
 }

@@ -155,8 +155,9 @@ node examples/agent-bot.mjs --url=https://noref.63-183-239-145.sslip.io:80 --mat
    records the replay's winner. A longer signed log can replace a shorter
    one. When the window closes anyone can call `finalize`; the replayed
    winner, if any, beats the claim.
-5. If nobody claims, `refund` returns both stakes 10 minutes after the match
-   should have ended.
+5. If nobody claims, `refund` is meant to return both stakes 10 minutes after
+   the match should have ended. On the deployed contract it cannot (see
+   "Known issue: draws" below), so the page offers the player a claim instead.
 
 Contract: `contracts/noref`, deployed at `arena.noref.testnet`, an account with
 no access keys: nobody, including us, can change or remove the code. Methods: `create`,
@@ -310,6 +311,17 @@ earlier run, before the budget step read a fresh balance, lost match #97,
 saw Brick and Dot skipped because they could pass the stop-loss, and ended
 down about 0.09 NEAR.
 
+Against the vault fighters, 14 Nov 2026, same command: the bot played Vex's
+vault three times, #266 (lost), #267 (won) and #268 (lost), ended 0.041 NEAR
+down, so nothing went to the owner, and deleted its account. Runs before it
+found three bugs, now fixed: the server quoted a vault fighter from a limit
+up to a minute old and from too thin a margin for the gas the vault's own
+call prepays, so the vault refused to join (#260, #265); the bot then left
+its stake in the open match (it now cancels, as in #265); and after an RPC
+rate limit mid-match it deleted its account while the match was still live
+(it now keeps the account). #260's 0.06 test NEAR stays locked: we
+re-created that deleted bot account to cancel it and lost the new key.
+
 How it works, for writing your own: `POST /api/login {name, key, account,
 bot: true}` makes `<name>.noref.testnet` with your public key (the server
 never sees the private one); `GET /api/state?me=` returns the roster with
@@ -364,11 +376,14 @@ Each item below also links the transaction on an explorer, for people.
   `UQVPg3sdWWWkaggDEMXBpFgbwJhs9i7zL3F5YAnDNeS` (199,084 bytes). The contract
   also reports its own source and build (NEP-330): call the view method
   `contract_source_metadata` to get the repository, commit `29301ca` and the
-  build command. Needs Docker:
+  build command. The deployed code is commit `29301ca`; the source has one
+  fix since (see "Known issue: draws"), so build that commit. Needs Docker:
 
   ```
+  git checkout 29301ca
   cd contracts/noref && cargo near build reproducible-wasm
-  cd ../../app && node scripts-code-hash.mjs      # MATCH
+  cd ../../app && node scripts-code-hash.mjs arena.noref.testnet   # MATCH
+  git checkout main
   ```
 - **A lie caught by a browser dispute** (match #0): Vex's claim
   [FnBKPJ1u…](https://testnet.nearblocks.io/txns/FnBKPJ1ucUDtVLxYdr9LZ3XFFZTH1b2ghpnNk7mP9fjy),
@@ -413,7 +428,7 @@ the contract is `arena.noref.testnet`, override with `CONTRACT=` and `HOUSE=`):
 cd app && CHAIN=testnet PORT=8789 DATA=./data/testnet node server/main.ts
 ```
 
-Tests (all pass from a clean copy: 30 Rust tests, 5 contract flow tests and 4
+Tests (all pass from a clean copy: 30 Rust tests, 7 contract flow tests and 4
 fighter-vault tests in a NEAR sandbox, 17 app tests including five full local matches: honest, lying
 NPC, lying player, and two people with and without a lie; `npm test` runs all
 17, `npm run test:quick` the 12 fast ones, `npm run test:e2e` the five matches):
@@ -448,10 +463,13 @@ Real, and checkable on testnet.nearblocks.io:
 Not claimed:
 
 - Testnet only. Test NEAR has no value. No mainnet deployment, no audit.
-- The fighter vault is built with `cargo near build non-reproducible-wasm`;
-  its deployed code hash (`2DF3uwuH171DXsjSMsjkBzroWqeFvCorh9jmr8fwBfEq`, the
-  same on all six fighters) matches our build, but unlike the arena it is not
-  pinned to a reproducible build image. No audit.
+- The fighter vault is not built in a pinned Docker image like the arena.
+  It is built with `cargo near build non-reproducible-wasm` (cargo-near
+  0.22.0) on Rust 1.94.1, pinned in `contracts/fighter/rust-toolchain.toml`;
+  a clean checkout built in another directory gives the same bytes, and
+  `node scripts-code-hash.mjs --fighter` shows they equal the code on all six
+  fighters (`2DF3uwuH171DXsjSMsjkBzroWqeFvCorh9jmr8fwBfEq`). Checked on macOS
+  only. No audit.
 - Agent limits: only the budget is enforced by NEAR (the account balance).
   Max-stake, stop-loss and the match count are the bot's own code; the
   contract is locked and knows nothing about them.
@@ -480,11 +498,37 @@ Not claimed:
   pays for it; when it runs low the page says so, and when it cannot fund one
   more account it stops making new ones instead of failing halfway
   (`/api/health` shows its state).
-- A stake is never stuck behind our server. If nobody joins, the creator signs
-  the contract's `cancel`; if a started match is never reported, anyone can
-  sign `refund` ten minutes after it should have ended; a claimed match whose
-  window passed can be paid out with `finalize`. The page lists such matches
-  under "Stakes waiting for you" with the button to sign.
+- A stake is not left stuck behind our server. If nobody joins, the creator
+  signs the contract's `cancel`; if a started match is never reported, the
+  page offers the player a claim two minutes after it should have ended (the
+  other side can still dispute it with the log it signed), and a claimed
+  match whose window passed can be paid out with `finalize`. The page lists
+  such matches under "Stakes waiting for you" with the button to sign. A
+  vault fighter's match that our server lost track of (a restart mid-match)
+  is conceded by the fighter after 15 minutes and finalized, so the vault is
+  not left busy.
+- **Known issue: draws.** The deployed arena cannot pay out a draw. Its
+  `settle` returned the two refunds joined with `and`, which NEAR refuses
+  ("Returning joint promise is currently prohibited"), so on
+  `arena.noref.testnet`:
+  - `refund` never works (it settles as a draw);
+  - a match whose result is a draw can never be paid out, by `confirm`,
+    `finalize` or a dispute;
+  - so a false claim in a drawn match cannot be overturned: the dispute
+    replays the draw, the payout fails, and the claim stands.
+  A draw needs both balls to stop exactly as far from the centre, which in
+  practice means nobody flicked at all: in 300 simulated NPC matches there
+  was none. We found it on 14 Nov, after the arena and the vaults (which are
+  bound to it) were locked, so the deployed contract cannot be changed. The
+  source is fixed (the second refund runs after the first, `.then`) and two
+  sandbox tests cover it (`draw_pays_both_back`,
+  `lie_in_a_drawn_match_is_overturned`; both fail on the deployed code with
+  that error). Moving to the fixed arena means a new arena account and six
+  new vault fighters; not done for the hackathon. One testnet match was hit:
+  #261, left open when our server restarted while a test bot that had
+  deleted its account was playing Vex; Vex claimed it as abandoned
+  ([nDkbkME1…](https://testnet.nearblocks.io/txns/nDkbkME1vVrJQbMyVMMNfz4aQtneqDD9Cicc2pd4a3c)),
+  the house finalized it and Vex's vault was free again.
 - The recorded demo (`#demo`) replays match #0's real inputs in the browser;
   its transactions are real, the animation is a playback.
 

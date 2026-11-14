@@ -786,7 +786,7 @@ function renderFaucet() {
 // ---------- stakes the player can take back ----------
 const STUCK = {
   cancel: { label: "Cancel, refund me", done: "your stake came back" },
-  refund: { label: "Refund both", done: "both stakes went back" },
+  claim: { label: "Claim the pot", done: "claimed; press Pay out once the dispute window closes" },
   finalize: { label: "Pay out", done: "the contract paid the winner" },
 };
 async function refreshStuck() {
@@ -811,7 +811,7 @@ async function refreshStuck() {
       b.disabled = true;
       b.textContent = "Signing…";
       try {
-        const t = await pc.call(m.action, { id: String(m.id) });
+        const t = await pc.call(m.action, { id: String(m.id), ...(m.args ?? {}) });
         note("tx", `You signed ${m.action} for match #${m.id}: ${STUCK[m.action].done}`, t.hash);
       } catch (e) {
         note("problem", `${m.action} for match #${m.id} failed: ${e.message}`);

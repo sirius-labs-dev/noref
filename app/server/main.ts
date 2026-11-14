@@ -320,6 +320,7 @@ async function syncNpcs() {
  * contract; dividends and rescues are calls to it. The server only mirrors.
  */
 async function syncVault(n: any) {
+  await chain.vaultUnstick(n.id, (id: number) => live.has(id) || invites.has(id)).catch((e: any) => console.error(`unstick ${n.id}:`, e.message));
   if ((await chain.vaultSyncAll(n.id)) > 0) await new Promise((ok) => setTimeout(ok, 1500));
   const v = await chain.vaultInfo(n.id);
   const holders = await chain.vaultHolders(n.id);
@@ -361,7 +362,7 @@ async function ladderOnchain() {
     await syncNpcs();
     ladderPair = "";
     // a vault that cannot stake the minimum is closed by its contract
-    const open = world.roster.filter((n) => eco.isOpen(n) && !(n.vault && n.vaultMax * 0.85 < eco.MIN_STAKE));
+    const open = world.roster.filter((n) => eco.isOpen(n) && !(n.vault && Math.min(n.vaultMax * 0.9, n.vaultMax - 8) < eco.MIN_STAKE));
     if (open.length < 2) return;
     const i = Math.floor(ladderRng() * open.length);
     let j = Math.floor(ladderRng() * (open.length - 1));
@@ -375,7 +376,8 @@ async function ladderOnchain() {
     // their limits now and stay under both, with room for the call's gas
     let limit = Infinity;
     for (const n of [a, b]) if (n.vault) limit = Math.min(limit, Math.floor(Number(BigInt((await chain.vaultInfo(n.id)).max_stake) / 10n ** 21n)));
-    if (r.stake > limit * 0.85) r.stake = Math.floor((limit * 0.85) / 10) * 10;
+    const room = Math.min(limit * 0.9, limit - 8); // same spare as eco.askStake
+    if (r.stake > room) r.stake = Math.floor(room / 10) * 10;
     if (r.stake < eco.MIN_STAKE) return;
     ladderPair = `${a.id} vs ${b.id} stake ${r.stake} (vault limit ${limit})`;
     const tx = await chain.ladderMatch(a.id, b.id, r.stake, r.winner, engine.MATCH_TICKS);
@@ -526,7 +528,10 @@ async function api(req: any, url: URL): Promise<unknown> {
         continue;
       }
       const end = Number(BigInt(c.started_ns) / 1_000_000n) + (c.duration / 60) * 1000;
-      stuck.push({ ...base, action: "refund", why: "nobody reported a result", readyAt: end + 10 * 60_000 });
+      // the contract's refund cannot pay a draw on the deployed arena (see the
+      // README's known issue), so the player claims the match: the other side
+      // can still dispute it with the log it signed, then anyone finalizes
+      stuck.push({ ...base, action: "claim", args: { winner: c.a === q.me ? 1 : 2 }, why: "the other side stopped: claim the pot (it can still dispute with the log it signed)", readyAt: end + 2 * 60_000 });
     }
     return { stuck, now };
   }
@@ -556,6 +561,8 @@ async function api(req: any, url: URL): Promise<unknown> {
     need(npc && eco.isOpen(npc), "that NPC is closed");
     need(!inMatch(me), "finish your current match first");
     const opp = await form(me);
+    // a vault checks the stake against its bankroll right now: quote from it
+    if (TESTNET && npc.vault) await syncVault(npc);
     const quote = eco.askStake(npc, nowW(), opp);
     need(!quote.declined, `${npc.name} won't play you: ${quote.why[quote.why.length - 1]}`);
     const { stake } = quote;

@@ -159,7 +159,14 @@ try {
     let r = await api("/api/challenge", { me, npc: choice.n.id });
     if (r.open) {
       const o = await pc.open(r.open); // the bot locks its own stake on-chain
-      r = await api("/api/opened", { me, id: o.id, tx: o.hash });
+      try {
+        r = await api("/api/opened", { me, id: o.id, tx: o.hash });
+      } catch (e) {
+        // the NPC did not join: take the stake back before anything else
+        const c = await pc.callAt(info.contract, "cancel", { id: String(o.id) });
+        log(`  ${e.message}; cancelled #${o.id}, stake back: ${c.hash}`);
+        throw e;
+      }
     }
     const done = new Promise((ok) => (settled = ok));
     client = new MatchClient({
@@ -199,7 +206,10 @@ try {
   stop();
   const net = results.reduce((a, r) => a + r.delta, 0); // per-match deltas, summed
   log(`done: ${results.length} match(es), net ${net >= 0 ? "+" : ""}${fmt(net)}`);
-  if (CLEANUP && testnet) {
+  if (CLEANUP && testnet && client) {
+    // a match is still running: its stake and payout need this account
+    log(`not deleting ${me}: match still in progress; run again or settle it from the page`);
+  } else if (CLEANUP && testnet) {
     try {
       const end = (await api(`/api/state?me=${me}`)).me.balance;
       const { toOwner } = payout(end, start);

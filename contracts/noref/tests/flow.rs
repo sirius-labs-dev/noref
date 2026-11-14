@@ -137,6 +137,50 @@ async fn liar_claim_is_overturned_by_replay() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn draw_pays_both_back() -> anyhow::Result<()> {
+    let (_w, c, a, b) = setup().await?;
+    let (ka, kb) = (key(1), key(2));
+    let id = open_match(&c, &a, &b, &ka, &kb, DURATION).await?;
+    let (a0, b0) = (a.view_account().await?.balance, b.view_account().await?.balance);
+    b.call(c.id(), "claim").args_json(json!({"id": id.to_string(), "winner": side::DRAW})).transact().await?.into_result()?;
+    let out = a.call(c.id(), "confirm").args_json(json!({"id": id.to_string()})).transact().await?;
+    assert!(out.is_success(), "{:?}", out.failures());
+    let (a1, b1) = (a.view_account().await?.balance, b.view_account().await?.balance);
+    let back = NearToken::from_millinear(990).as_yoctonear();
+    assert!(a1.as_yoctonear() > a0.as_yoctonear() + back, "A got its stake back");
+    assert!(b1.as_yoctonear() > b0.as_yoctonear() + back - NearToken::from_millinear(10).as_yoctonear(), "B got its stake back");
+    assert_eq!(get(&c, id).await?["result"], side::DRAW);
+    Ok(())
+}
+
+#[tokio::test]
+async fn lie_in_a_drawn_match_is_overturned() -> anyhow::Result<()> {
+    let (_w, c, a, b) = setup().await?;
+    let (ka, kb) = (key(1), key(2));
+    let id = open_match(&c, &a, &b, &ka, &kb, DURATION).await?;
+    // nobody flicked: the table never moved, the match is a draw
+    let log: Vec<u8> = Vec::new();
+    let last = DURATION - 1;
+    let sig_b = sign(&kb, id, &log, DURATION, last);
+    b.call(c.id(), "claim").args_json(json!({"id": id.to_string(), "winner": side::SECOND})).transact().await?.into_result()?;
+    let out = a
+        .call(c.id(), "dispute")
+        .args_json(json!({"id": id.to_string(), "log": b64(&log), "signed_tick": last, "signature": b64(&sig_b)}))
+        .max_gas()
+        .transact()
+        .await?;
+    assert!(out.is_success(), "{:?}", out.failures());
+    assert_eq!(get(&c, id).await?["replayed"]["winner"], side::DRAW);
+    tokio::time::sleep(std::time::Duration::from_secs(WINDOW + 2)).await;
+    let a0 = a.view_account().await?.balance;
+    let out = b.call(c.id(), "finalize").args_json(json!({"id": id.to_string()})).transact().await?;
+    assert!(out.is_success(), "{:?}", out.failures());
+    assert!(a.view_account().await?.balance.as_yoctonear() >= a0.as_yoctonear() + NearToken::from_near(1).as_yoctonear());
+    assert_eq!(get(&c, id).await?["result"], side::DRAW);
+    Ok(())
+}
+
+#[tokio::test]
 async fn self_signed_or_tampered_log_is_rejected() -> anyhow::Result<()> {
     let (_w, c, a, b) = setup().await?;
     let (ka, kb) = (key(1), key(2));

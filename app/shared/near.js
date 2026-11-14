@@ -188,6 +188,11 @@ export class Near {
         continue;
       }
       const j = await r.json();
+      // some providers answer a rate limit inside a 200 response
+      if (j.error?.code === -429 && attempt < 4) {
+        await new Promise((ok) => setTimeout(ok, 1000 * 2 ** attempt));
+        continue;
+      }
       if (j.error) throw Object.assign(new Error(JSON.stringify(j.error.data ?? j.error.cause ?? j.error)), { rpc: j.error });
       return j.result;
     }

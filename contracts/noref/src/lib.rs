@@ -298,7 +298,10 @@ impl NoRef {
         match winner {
             side::FIRST => Promise::new(m.a.clone()).transfer(pot),
             side::SECOND => Promise::new(b).transfer(pot),
-            _ => Promise::new(m.a.clone()).transfer(m.stake).and(Promise::new(b).transfer(m.stake)),
+            // a draw (or a refund) pays both back. Two transfers joined with
+            // `and` cannot be returned from a call ("Returning joint promise
+            // is currently prohibited"), so the second runs after the first.
+            _ => Promise::new(m.a.clone()).transfer(m.stake).then(Promise::new(b).transfer(m.stake)),
         }
     }
 }

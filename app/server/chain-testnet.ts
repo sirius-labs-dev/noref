@@ -184,6 +184,32 @@ export class TestnetChain {
     return this.near.send(this.house, this.owner, this.acct(npcId), [action.call("sync", { id: String(id) }, 60n * TGAS)]);
   }
   /** Stakes the vault still counts as in play: tell it about the ones that are over. */
+  /**
+   * A vault match this server lost track of (it restarted mid-match) would
+   * keep the vault busy forever: the deployed arena's refund cannot pay a
+   * draw. Fifteen minutes after such a match should have ended, the NPC
+   * concedes it (the other side wins: the fault was ours), and once the
+   * claim window is over the house finalizes it.
+   */
+  async vaultUnstick(npcId: string, busy: (id: number) => boolean) {
+    const acct = this.acct(npcId);
+    for (const [idS] of (await this.vaultInfo(npcId)).in_play) {
+      const id = Number(idS);
+      if (busy(id)) continue;
+      const m = await this.near.view(this.contract, "get_match", { id: String(id) });
+      if (!m || m.phase !== "Live") continue;
+      if (!m.claim) {
+        const end = Number(BigInt(m.started_ns) / 1_000_000n) + (m.duration / 60) * 1000;
+        if (Date.now() < end + 15 * 60_000) continue;
+        const r = await this.npcTx(npcId, "claim", { id: String(id), winner: m.a === acct ? 2 : 1 });
+        console.log(`${npcId} conceded abandoned match #${id}: ${r.hash}`);
+      } else if (Date.now() >= Number(BigInt(m.window_end_ns) / 1_000_000n)) {
+        const r = await this.near.send(this.house, this.owner, this.contract, [action.call("finalize", { id: String(id) }, 30n * TGAS)]);
+        console.log(`finalized abandoned match #${id}: ${r.hash}`);
+      }
+    }
+  }
+
   async vaultSyncAll(npcId: string) {
     const v = await this.vaultInfo(npcId);
     for (const [id] of v.in_play) await this.vaultSync(npcId, Number(id)).catch((e) => console.error(`sync ${npcId} #${id}:`, e.message));
