@@ -111,6 +111,7 @@ try {
     autoSettle: !humanLies,
     log: (kind, text) => ["round", "final", "you", "problem"].includes(kind) && log(`[${kind}] ${text}`),
     aim: async (eng) => {
+      if (humanLies) return null; // never flick, so the claim of a win is a lie
       const f = chooseFlick(eng, { ball: 0, style: "sniper", skill: 1, rng, fast: true });
       return f.pass ? null : { angle: f.angle, power: f.power };
     },

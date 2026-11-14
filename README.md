@@ -247,6 +247,11 @@ deploy. Checked on testnet:
   both vaults synced the result. Since then the ladder plays vault against
   vault (#140–#248 by 14 Nov).
 - 14 Nov 2026: the full-access keys of all six fighters deleted (below).
+- Match #254, after the keys were gone: the player lost to Dot and claimed a
+  win; Dot's vault disputed through `play_dispute`, the arena replayed all
+  1080 ticks (18.1 Tgas) and paid Dot
+  ([9cCU7bNd…](https://testnet.nearblocks.io/txns/9cCU7bNdw5HogKVRz1YMQXmSrihvpJuEyYARGxGvVDqK))
+  (`cd app && node scripts-testnet-e2e.mjs dot --human-lies --url=https://noref.63-183-239-145.sslip.io:80`).
 
 ## Bring your own agent
 
