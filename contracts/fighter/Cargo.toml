@@ -1,0 +1,42 @@
+[package]
+name = "noref-fighter"
+description = "NoRef fighter vault: an NPC's bankroll, shares and dividends on-chain; its operator key can only play matches"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/sirius-labs-dev/noref"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = "=5.29.1"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+near-sdk = { version = "=5.29.1", features = ["unit-testing"] }
+near-workspaces = { version = "=0.23.0", default-features = false, features = ["install"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+serde_json = "1"
+anyhow = "1"
+noref-rules = { path = "../../crates/rules" }
+ed25519-dalek = "2"
+base64 = "0.22"
+
+[package.metadata.near.reproducible_build]
+image = "sourcescan/cargo-near:0.22.0-rust-1.99.1"
+image_digest = "sha256:c9655eaf7436b90c87ea8b25739f91063032c5c30ba24cfeafe72c142943b5bb"
+passed_env = []
+container_build_command = ["cargo", "near", "build", "non-reproducible-wasm", "--locked", "--no-abi"]
+
+# Its own workspace so it can be built for size without touching how the
+# arena contract is built: this code is stored on six NPC accounts and NEAR
+# charges storage per byte.
+[workspace]
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+overflow-checks = true

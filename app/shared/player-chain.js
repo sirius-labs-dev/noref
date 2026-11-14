@@ -25,6 +25,10 @@ export class PlayerChain {
     Object.assign(this, { contract, accountId, key, api, log: log ?? (() => {}) });
   }
 
+  /** A call to another contract (a fighter vault: back, cash_out). */
+  async callAt(receiver, method, args, gas = 30n, deposit = 0n) {
+    return this.near.send(this.accountId, this.key, receiver, [action.call(method, args, gas * TGAS, BigInt(deposit))]);
+  }
   async call(method, args, gas = 30n, deposit = 0n) {
     return this.near.send(this.accountId, this.key, this.contract, [action.call(method, args, gas * TGAS, BigInt(deposit))]);
   }

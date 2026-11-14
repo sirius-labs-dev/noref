@@ -1,5 +1,7 @@
 [workspace]
 resolver = "2"
+# own workspace: built for size, see contracts/fighter/Cargo.toml
+exclude = ["contracts/fighter"]
 members = [
     "crates/tick-core",
     "crates/merkle",
@@ -20,3 +22,4 @@ panic = "abort"
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
+

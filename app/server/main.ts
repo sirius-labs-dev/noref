@@ -277,6 +277,10 @@ async function syncNpcs() {
   const busy = new Set([...live.values()].filter((m: any) => !m.pvp).map((m: any) => m.npc.id));
   for (const n of world.roster) {
     if (busy.has(n.id)) continue; // its stake is locked in a live match; settle first
+    if (chain.isVault(n.id)) {
+      await syncVault(n);
+      continue;
+    }
     const bal = (await chain.hasAccount(n.id)) ? await chain.refreshBalance(n.id) : 0;
     n.bankroll = Math.max(0, bal - NPC_RESERVE);
     eco.updateStatus(n, nowW()).forEach((t) => feed(t));
@@ -311,13 +315,53 @@ async function syncNpcs() {
   persist();
 }
 
+/**
+ * A fighter with a vault: its bankroll, shares and holders are read from its
+ * contract; dividends and rescues are calls to it. The server only mirrors.
+ */
+async function syncVault(n: any) {
+  if ((await chain.vaultSyncAll(n.id)) > 0) await new Promise((ok) => setTimeout(ok, 1500));
+  const v = await chain.vaultInfo(n.id);
+  const holders = await chain.vaultHolders(n.id);
+  n.vault = true;
+  n.bankroll = Math.floor(Number(BigInt(v.bankroll) / 10n ** 21n));
+  n.shares = Number(v.total_shares);
+  n.holders = Object.fromEntries(holders.map(([who, sh]) => [who === HOUSE ? "house" : who, Number(sh)]));
+  n.divAt = Math.floor(Number(BigInt(v.div_at) / 10n ** 21n));
+  n.vaultMax = Math.floor(Number(BigInt(v.max_stake) / 10n ** 21n));
+  eco.updateStatus(n, nowW()).forEach((t) => feed(t));
+  // sponsor of last resort: after a while closed, the house backs it, buying shares like anyone
+  if (n.status === "retired" && n.closedAt && nowW() - n.closedAt > RESCUE_MS) {
+    const amount = eco.REOPEN_AT + 100 - n.bankroll;
+    if (chain.balance(HOUSE) - amount > HOUSE_FLOOR + HOUSE_LOCKED) {
+      const hash = await chain.houseBack(n.id, amount);
+      feed(`The house backed ${n.name} with ${eco.fmt(amount)}: shares bought from its vault`, nowW(), chain.explorer(hash));
+      return syncVault(n);
+    }
+  }
+  // dividends: the vault sets the excess aside and pays every holder pro rata
+  if (n.bankroll > n.divAt) {
+    try {
+      const d = await chain.vaultDividends(n.id);
+      feed(`${n.name}'s vault paid ${eco.fmt(d.total)} in dividends to ${d.paid.length} holder(s)`, nowW(), chain.explorer(d.hash));
+      for (const p of d.paid) if (p.who !== HOUSE) feed(`${p.who} received ${eco.fmt(p.milli)} from ${n.name}`, nowW(), chain.explorer(p.hash));
+      return syncVault(n);
+    } catch (e: any) {
+      console.error(`dividends ${n.id}:`, e.message);
+    }
+  }
+}
+
 let ladderBusy = false;
+let ladderPair = "";
 async function ladderOnchain() {
   if (ladderBusy || live.size > 0) return;
   ladderBusy = true;
   try {
     await syncNpcs();
-    const open = world.roster.filter((n) => eco.isOpen(n));
+    ladderPair = "";
+    // a vault that cannot stake the minimum is closed by its contract
+    const open = world.roster.filter((n) => eco.isOpen(n) && !(n.vault && n.vaultMax * 0.85 < eco.MIN_STAKE));
     if (open.length < 2) return;
     const i = Math.floor(ladderRng() * open.length);
     let j = Math.floor(ladderRng() * (open.length - 1));
@@ -327,13 +371,20 @@ async function ladderOnchain() {
     eco.noteChallenge(a, now);
     const r = simulateNpcMatch(a, b, ladderRng, now, false);
     if (!r) return;
+    // the vaults check the stake against their bankroll at call time: read
+    // their limits now and stay under both, with room for the call's gas
+    let limit = Infinity;
+    for (const n of [a, b]) if (n.vault) limit = Math.min(limit, Math.floor(Number(BigInt((await chain.vaultInfo(n.id)).max_stake) / 10n ** 21n)));
+    if (r.stake > limit * 0.85) r.stake = Math.floor((limit * 0.85) / 10) * 10;
+    if (r.stake < eco.MIN_STAKE) return;
+    ladderPair = `${a.id} vs ${b.id} stake ${r.stake} (vault limit ${limit})`;
     const tx = await chain.ladderMatch(a.id, b.id, r.stake, r.winner, engine.MATCH_TICKS);
     const who = r.winner === SIDE.DRAW ? "draw" : (r.winner === SIDE.FIRST ? a.name : b.name) + " won";
     feed(`Ladder match #${tx.id} on-chain: ${a.name} vs ${b.name} for ${eco.fmt(2 * r.stake)}: ${who}`, now, chain.explorer(tx.settle));
     r.events.forEach((t) => feed(t, now));
     await syncNpcs();
   } catch (e: any) {
-    console.error("ladder:", e.message);
+    console.error("ladder:", ladderPair, e.message);
   } finally {
     ladderBusy = false;
   }
@@ -372,6 +423,7 @@ function rosterView(now = nowW(), opp: any = null) {
       why: p.why,
       declined: p.declined,
       sharePrice: eco.sharePrice(n),
+      vault: !!n.vault,
       shares: n.shares,
       holders: n.holders,
       history: sample(n.history, 240),
@@ -732,6 +784,18 @@ async function api(req: any, url: URL): Promise<unknown> {
     player(me);
     const npc = npcById(q.npc);
     need(npc, "no such NPC");
+    if (TESTNET && chain.isVault(npc.id)) {
+      // the player called the vault directly (back / cash_out); check it and mirror
+      need(typeof q.tx === "string" && !usedTx.has(q.tx), "tx missing or already used");
+      const back = p === "/api/sponsor";
+      const amount = back ? Math.round(Number(q.amount) * eco.MILLI) : undefined;
+      const v = await chain.verifyVaultCall(q.tx, me, npc.id, back ? "back" : "cash_out", amount);
+      usedTx.add(q.tx);
+      await syncVault(npc);
+      feed(back ? `${tag(me)} backed ${npc.name} with ${eco.fmt(amount!)}: ${v} shares from its vault` : `${tag(me)} cashed out ${q.shares} ${npc.name} shares; the vault paid`, nowW(), chain.explorer(q.tx));
+      persist();
+      return { minted: back ? Number(v) : undefined, balance: await chain.refreshBalance(me) };
+    }
     if (p === "/api/sponsor") {
       const amount = Math.round(Number(q.amount) * eco.MILLI);
       if (TESTNET) {

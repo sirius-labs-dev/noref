@@ -49,6 +49,7 @@ export class TestnetChain {
     this.owner = await this.loadKey(this.house);
     if (!this.owner) throw new Error(`no key for ${this.house} in .keys/`);
     await this.refreshBalance(this.house);
+    await this.detectVaults();
     setInterval(() => this.pollAll().catch((e) => console.error("poll:", e.message)), 1500);
   }
 
@@ -87,6 +88,11 @@ export class TestnetChain {
     return this.bal.get(this.acct(who)) ?? 0;
   }
   async refreshBalance(who: string) {
+    if (this.vaults.has(who)) {
+      const v = yoctoToMilli(BigInt((await this.vaultInfo(who)).bankroll));
+      this.bal.set(this.acct(who), v);
+      return v;
+    }
     const a = await this.near.account(this.acct(who));
     const v = a ? yoctoToMilli(a.amount) : 0;
     this.bal.set(this.acct(who), v);
@@ -114,6 +120,15 @@ export class TestnetChain {
   /** Make sure the NPC's chain account exists and can cover `needMilli` plus gas. */
   async ensureNpc(npcId: string, needMilli: number) {
     const id = this.acct(npcId);
+    if (this.vaults.has(npcId)) {
+      // a vault is never topped up from outside (that would be a gift to its
+      // shareholders); it either covers the stake under its own rules or not
+      const v = await this.vaultInfo(npcId);
+      if (v.in_play.length) await this.vaultSyncAll(npcId);
+      if (milliToYocto(needMilli) > BigInt(v.max_stake)) throw new Error(`${id} cannot stake ${needMilli / 1000} NEAR under its vault rules`);
+      await this.refreshBalance(npcId);
+      return id;
+    }
     const reserve = 300; // gas + storage
     let k = await this.loadKey(id);
     const a = await this.near.account(id);
@@ -135,12 +150,68 @@ export class TestnetChain {
   /** NPC pays someone out of its own account (cash-out, dividends). Never topped up by the house. */
   async pay(npcId: string, to: string, milli: number) {
     const id = this.acct(npcId);
+    if (this.vaults.has(npcId)) throw new Error(`${id} is a vault: it pays only through cash_out and dividends`);
     await this.loadKey(id);
     if ((await this.refreshBalance(npcId)) < milli + 100) throw new Error(`${id} cannot cover ${milli / 1000} NEAR`);
     const r = await this.near.send(this.acct(npcId), this.keys.get(this.acct(npcId)), to, [action.transfer(milliToYocto(milli))]);
     this.refreshBalance(to).catch(() => {});
     this.refreshBalance(npcId).catch(() => {});
     return r.hash;
+  }
+
+  // ---- fighter vaults (contracts/fighter deployed on the NPC's own account) ----
+  /** NPC ids whose account runs the fighter vault: their money moves only by its rules. */
+  vaults = new Set<string>();
+  async detectVaults() {
+    for (const id of this.npcIds) {
+      const a = await this.near.account(this.acct(id)).catch(() => null);
+      if (a && a.code_hash !== "11111111111111111111111111111111") this.vaults.add(id);
+      else this.vaults.delete(id);
+    }
+  }
+  isVault(npcId: string) {
+    return this.vaults.has(npcId);
+  }
+  /** The vault's own view: bankroll, shares, price, stakes in play (yoctoNEAR strings). */
+  async vaultInfo(npcId: string) {
+    return this.near.view(this.acct(npcId), "info", {});
+  }
+  async vaultHolders(npcId: string): Promise<[string, string][]> {
+    return this.near.view(this.acct(npcId), "holders", {});
+  }
+  /** Anyone may tell a vault a match is over; the house pays the gas. */
+  async vaultSync(npcId: string, id: number) {
+    return this.near.send(this.house, this.owner, this.acct(npcId), [action.call("sync", { id: String(id) }, 60n * TGAS)]);
+  }
+  /** Stakes the vault still counts as in play: tell it about the ones that are over. */
+  async vaultSyncAll(npcId: string) {
+    const v = await this.vaultInfo(npcId);
+    for (const [id] of v.in_play) await this.vaultSync(npcId, Number(id)).catch((e) => console.error(`sync ${npcId} #${id}:`, e.message));
+    return v.in_play.length;
+  }
+  /** Dividends: set aside the excess, then pay each holder. Returns what was paid to whom. */
+  async vaultDividends(npcId: string) {
+    const acct = this.acct(npcId);
+    const r = await this.near.send(this.house, this.owner, acct, [action.call("pay_dividends", {}, 30n * TGAS)]);
+    const paid: { who: string; milli: number; hash: string }[] = [];
+    for (const [who] of await this.vaultHolders(npcId)) {
+      const c = await this.near.send(this.house, this.owner, acct, [action.call("claim_dividend", { account_id: who }, 30n * TGAS)]);
+      const milli = yoctoToMilli(BigInt(String(c.result ?? "0")));
+      if (milli > 0) paid.push({ who, milli, hash: c.hash });
+    }
+    return { hash: r.hash, total: yoctoToMilli(BigInt(String(r.result))), paid };
+  }
+  /** Check a call a player signed in the browser to a vault (back / cash_out). */
+  async verifyVaultCall(hash: string, from: string, npcId: string, method: string, depositMilli?: number) {
+    const t = await this.near.tx(hash, from);
+    if (t.status?.Failure) throw new Error(`${method} failed on-chain`);
+    const tx = t.transaction;
+    const fc = tx.actions?.find((a: any) => a.FunctionCall)?.FunctionCall;
+    if (tx.signer_id !== from || tx.receiver_id !== this.acct(npcId) || fc?.method_name !== method) throw new Error(`transaction is not a ${method} on ${this.acct(npcId)}`);
+    if (depositMilli != null && BigInt(fc.deposit) !== milliToYocto(depositMilli)) throw new Error("wrong amount");
+    this.refreshBalance(from).catch(() => {});
+    const v = t.status?.SuccessValue ? JSON.parse(atob(t.status.SuccessValue)) : null;
+    return v;
   }
 
   /** Does the NPC have a chain account yet? */
@@ -150,7 +221,9 @@ export class TestnetChain {
 
   /** The house backs an NPC with a real transfer (sponsor of last resort). */
   async houseBack(npcId: string, milli: number) {
-    const r = await this.near.send(this.house, this.owner, this.acct(npcId), [action.transfer(milliToYocto(milli))]);
+    const r = this.vaults.has(npcId)
+      ? await this.near.send(this.house, this.owner, this.acct(npcId), [action.call("back", {}, 30n * TGAS, milliToYocto(milli))])
+      : await this.near.send(this.house, this.owner, this.acct(npcId), [action.transfer(milliToYocto(milli))]);
     this.refreshBalance(npcId).catch(() => {});
     this.refreshBalance(this.house).catch(() => {});
     return r.hash;
@@ -163,27 +236,37 @@ export class TestnetChain {
    * so nothing here is disputed; the money still moves on-chain.
    */
   async ladderMatch(aId: string, bId: string, stakeMilli: number, winner: number, duration: number) {
-    const A = this.acct(aId);
-    const B = this.acct(bId);
-    const ka = await this.loadKey(A);
-    const kb = await this.loadKey(B);
-    if (!ka || !kb) throw new Error("missing NPC key");
     const sk = () => Array.from(globalThis.crypto.getRandomValues(new Uint8Array(32)), (x) => x.toString(16).padStart(2, "0")).join("");
     const dep = milliToYocto(stakeMilli);
-    const call = (who: string, key: any, method: string, args: any, deposit = 0n) => this.near.send(who, key, this.contract, [action.call(method, args, 30n * TGAS, deposit)]);
-    const c = await call(A, ka, "create", { duration, session_key: sk(), window_secs: 10, opponent: B }, dep);
+    const c = await this.npcTx(aId, "create", { duration, session_key: sk(), window_secs: 10, opponent: this.acct(bId) }, dep);
     const id = Number(c.result);
     try {
-      await call(B, kb, "join", { id: String(id), session_key: sk() }, dep);
+      await this.npcTx(bId, "join", { id: String(id), session_key: sk() }, dep);
     } catch (e) {
-      await call(A, ka, "cancel", { id: String(id) }).catch(() => {});
+      await this.npcTx(aId, "cancel", { id: String(id) }).catch(() => {});
+      if (this.vaults.has(aId)) await this.vaultSync(aId, id).catch(() => {});
       throw e;
     }
-    await call(A, ka, "claim", { id: String(id), winner });
-    const f = await call(B, kb, "confirm", { id: String(id) });
+    await this.npcTx(aId, "claim", { id: String(id), winner });
+    const f = await this.npcTx(bId, "confirm", { id: String(id) });
+    for (const n of [aId, bId]) if (this.vaults.has(n)) await this.vaultSync(n, id).catch((e) => console.error(`sync ${n} #${id}:`, e.message));
     this.refreshBalance(aId).catch(() => {});
     this.refreshBalance(bId).catch(() => {});
     return { id, create: c.hash, settle: f.hash };
+  }
+
+  /**
+   * An arena call signed by an NPC. With a vault the NPC's key may only call
+   * the vault's play_* methods: the stake goes as an argument and the vault
+   * attaches it from its own balance after checking its rules.
+   */
+  private async npcTx(npcId: string, method: string, args: any, deposit = 0n, gas = 30n) {
+    const account = this.acct(npcId);
+    const key = await this.loadKey(account);
+    if (!key) throw new Error(`no key for ${account}`);
+    if (!this.vaults.has(npcId)) return this.near.send(account, key, this.contract, [action.call(method, args, gas * TGAS, deposit)]);
+    const a = deposit > 0n ? { ...args, stake: String(deposit) } : args;
+    return this.near.send(account, key, account, [action.call(`play_${method}`, a, method === "dispute" ? 300n * TGAS : 60n * TGAS, 0n)]);
   }
 
   /** Check a transfer the player signed in the browser. */
@@ -199,12 +282,10 @@ export class TestnetChain {
 
   // ---- contract calls signed by NPCs / the house ----
   private async npcCall(npcId: string, id: number, kind: string, method: string, args: any, gas = 30n, deposit = 0n) {
-    const account = this.acct(npcId);
-    const key = await this.loadKey(account);
     this.inflight.add(id); // so the poller does not report it before we know the hash
     let r;
     try {
-      r = await this.near.send(account, key, this.contract, [action.call(method, args, gas * TGAS, deposit)]);
+      r = await this.npcTx(npcId, method, args, deposit, gas);
     } finally {
       this.inflight.delete(id);
     }
@@ -374,6 +455,10 @@ export class TestnetChain {
       else if (m.claim) this.emit(id, "finalize", `Dispute window closed; anyone may finalize`);
       this.emit(id, "settle", w === SIDE.DRAW ? `Draw: both refunded on-chain` : `Contract paid ${pot} NEAR to ${w === SIDE.FIRST ? m.a : m.b}`, { winner: w });
       [m.a, m.b].forEach((x) => x && this.refreshBalance(x).catch(() => {}));
+    }
+    if ((m.phase === "settled" || m.phase === "cancelled") && prev && prev.phase !== m.phase) {
+      // a vault keeps its stake "in play" until someone shows it the match is over
+      for (const x of [m.a, m.b]) if (x && this.vaults.has(x)) this.vaultSync(x, id).then(() => this.refreshBalance(x)).catch((e) => console.error(`sync ${x} #${id}:`, e.message));
     }
     return m;
   }

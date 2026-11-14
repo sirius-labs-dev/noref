@@ -88,12 +88,15 @@ your network.
    ladder. To run a week live yourself: `cd app && npm start`, then press
    "Fast-forward a week" (about 20 s).
 9. **Own a piece of a fighter.** Logged in, press "Back with 0.1 NEAR" on a
-   fighter. You sign a real transfer into that fighter's own account.
+   fighter. You sign a call to that fighter's own vault contract (`back`),
+   which mints your shares on-chain; the card's "◆ money held by its own
+   contract ↗" link opens it.
    You should see "you own N% · worth X" on its card, "backing 1 · X" next to
    your balance, and the backing in the feed. Its wins raise what your shares
    are worth; when its bankroll passes 3 NEAR it pays dividends to its
    backers (a real transfer from its account, with a `tx ↗` in the feed).
-   "Cash out" pays you back from the fighter's account.
+   "Cash out" signs the vault's `cash_out`: the contract pays your shares'
+   value from its own balance.
 10. **Run the Gauntlet.** The Gauntlet card lists the six fighters; each one
    you beat gets a ✓, and the board ranks players by fighters beaten, then
    wins. It is computed from settled matches on the contract
@@ -164,8 +167,9 @@ no access keys: nobody, including us, can change or remove the code. Methods: `c
 
 Every rule is in `app/shared/economy.js`.
 
-- **Fighters are businesses.** Each NPC has a real account. Its bankroll is
-  that account's balance minus a 0.3 NEAR gas reserve.
+- **Fighters are businesses.** Each NPC has a real account running its own
+  vault contract (see "Fighter vaults" below). Its bankroll is the vault's
+  balance minus storage and a 0.1 NEAR gas reserve.
 - **Prices move.** An NPC asks a stake from its rating and recent demand,
   never more than a tenth of its bankroll.
 - **Each NPC sizes its bet to you.** It reads your public record from settled
@@ -182,16 +186,67 @@ Every rule is in `app/shared/economy.js`.
 - **The ladder never stops.** Every 15 minutes two NPCs play a real match on
   the contract (`create`, `join`, `claim`, `confirm`), so money moves between
   them even when nobody is playing. Gas is their upkeep.
-- **Player-owned fighters.** Anyone can back a fighter with a real transfer
-  into its account and get shares of its bankroll; wins raise the share value,
-  losses lower it; cash out any time (the NPC pays you from its account). The
-  money is on-chain in the fighter's account; the share register is kept by
-  our server (see "What is real").
-- **Dividends.** A fighter whose bankroll passes 3 NEAR pays the excess to its
-  backers, pro rata to their shares.
+- **Player-owned fighters.** Anyone can back a fighter and get shares of its
+  bankroll; wins raise the share value, losses lower it; cash out any time.
+  Shares, prices and payouts are kept by the fighter's vault contract, not by
+  our server.
+- **Dividends.** A fighter whose bankroll passes 3 NEAR pays everything above
+  2 NEAR to its shareholders, pro rata to their shares.
 - **Bankruptcy.** A fighter that can no longer stake the minimum closes. If it
-  stays closed for two hours, the house backs it again with a real transfer
-  (sponsor of last resort).
+  stays closed for two hours, the house backs it again by buying shares in its
+  vault (sponsor of last resort).
+
+### Fighter vaults
+
+Each fighter's money sits in a small contract on the fighter's own account
+(`contracts/fighter`, the same code on all six). Every rule about that money
+is in it:
+
+| Rule | In the vault |
+|---|---|
+| Buy shares | `back` (≥ 0.01 NEAR) mints shares at bankroll ÷ shares |
+| Sell shares | `cash_out(shares)` burns them and pays their value from the vault |
+| Dividends | `pay_dividends`: above 3 NEAR, everything over 2 NEAR goes to holders (acc-per-share); `claim_dividend(account)` pays one holder. Anyone may call both; money only goes to the holder |
+| Stake limit | `play_create` / `play_join` refuse a stake under 0.05 NEAR or over a tenth of the bankroll; under the minimum the fighter is closed |
+| No trading on a known result | while a match is open, `back` and `cash_out` wait until `sync(id)` (anyone may call it) reads the match from `arena.noref.testnet` as settled or cancelled |
+| Who may play | `play_*` only from the account's own key; the vault attaches the stake itself |
+
+Our server plays the fighters with a function-call key that can only call
+the vault's six `play_*` methods on that account. Such a key cannot attach
+money, so it cannot take any out: the most it can do is play matches within
+the stake limit, and the arena contract still decides who won. It is the
+only key left on each fighter account: the full-access keys were deleted
+(Vex [H9ryXM2k…](https://testnet.nearblocks.io/txns/H9ryXM2kEm9w5uvX2S7vZaxHS15TPrX2mf7Vy6CJw2yo),
+Brick [7NMt7uU4…](https://testnet.nearblocks.io/txns/7NMt7uU4EZcC9f6bnRWKF5j4DxJmmmgk2mnpdACzUqTc),
+Moss [rMecRqQr…](https://testnet.nearblocks.io/txns/rMecRqQr83hxwztf7UnBYsB9YFABPLTRd7G5hYD241d),
+Pip [A6iSxPvc…](https://testnet.nearblocks.io/txns/A6iSxPvcKjczyVGnBBtr3fsScnkDbBQiDwHuUxC8VhN3),
+Dot [H96WgEpU…](https://testnet.nearblocks.io/txns/H96WgEpUDaFcsaEspKh33YdpXttktmA3ppvZ1ZFVF4A9),
+Rook [A7XNK4Js…](https://testnet.nearblocks.io/txns/A7XNK4JsbJYJgnCDcLno6RSitP54erus7SEFcrvvSHTj)).
+Nobody, us included, can move a fighter's money except by the vault's rules,
+and nobody can change a vault's code. The server's
+copy of shares and bankrolls is read from `info` and `holders`.
+
+Migrated on testnet on 12 Nov 2026 (`app/scripts-vaults.mjs`): the share
+register the server had kept until then was written into each vault at
+deploy. Checked on testnet:
+- Vex's vault deployed and initialised
+  ([Fx4kDJzZ…](https://testnet.nearblocks.io/txns/Fx4kDJzZQRrVsfUch1upnNd74Pyo1nhLD3bPyGgbki8V)),
+  its play-only key added
+  ([4NX2MdtD…](https://testnet.nearblocks.io/txns/4NX2MdtDkVfA5AQtcJCQQAsgdTsoyhXqpzyJ4Wf5TrKE)).
+- Match #110: Vex joined through its vault, claimed a win it did not have, the
+  player disputed, the arena replayed the match and paid the player; the
+  vault's `sync` then cleared the match and its bankroll dropped by the stake.
+- A fresh player backed Vex with 0.1 NEAR for 80 shares
+  ([Bj1NHWe6…](https://testnet.nearblocks.io/txns/Bj1NHWe6poTsR6bs7QWAsrmK14A8yf6G8YfXmSr7h8vG))
+  and cashed all 80 out
+  ([HFznNHUp…](https://testnet.nearblocks.io/txns/HFznNHUpUwNVEd4KzT14ikNAiTkvjtuMzQVha53gTLj6));
+  the vault's register and the server's copy agreed at each step
+  (`cd app && node scripts-testnet-vault.mjs vex --url=https://noref.63-183-239-145.sslip.io:80`).
+- Rook's vault passed 3 NEAR and paid 1.213 NEAR in dividends.
+- Match #140: Rook's vault against Vex's vault, 0.09 NEAR each; Rook won and
+  both vaults synced the result. Since then the ladder plays vault against
+  vault (#140–#248 by 14 Nov).
+- 14 Nov 2026: the full-access keys of all six fighters deleted (below).
 
 ## Bring your own agent
 
@@ -280,6 +335,14 @@ curl -s $RPC -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"me
 # -> result is JSON bytes of match #0: claim.winner 2 (Vex), replayed.winner 1, result 1 (sides: 1 creator, 2 joiner, 0 draw)
 ```
 
+A fighter's vault (bankroll, shares, holders, stake limit) and its keys:
+
+```
+curl -s $RPC -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"call_function","finality":"final","account_id":"npc-vex.noref.testnet","method_name":"info","args_base64":"e30="}}'
+curl -s $RPC -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"query","params":{"request_type":"view_access_key_list","finality":"final","account_id":"npc-vex.noref.testnet"}}'
+# -> one key only, a FunctionCall key: receiver_id npc-vex.noref.testnet, method_names play_create … play_dispute (no FullAccess key)
+```
+
 Each item below also links the transaction on an explorer, for people.
 
 - **Nobody can change the contract.** It lives at
@@ -345,14 +408,15 @@ the contract is `arena.noref.testnet`, override with `CONTRACT=` and `HOUSE=`):
 cd app && CHAIN=testnet PORT=8789 DATA=./data/testnet node server/main.ts
 ```
 
-Tests (all pass from a clean copy: 30 Rust tests, 5 contract flow tests in a
-NEAR sandbox, 17 app tests including five full local matches: honest, lying
+Tests (all pass from a clean copy: 30 Rust tests, 5 contract flow tests and 4
+fighter-vault tests in a NEAR sandbox, 17 app tests including five full local matches: honest, lying
 NPC, lying player, and two people with and without a lie; `npm test` runs all
 17, `npm run test:quick` the 12 fast ones, `npm run test:e2e` the five matches):
 
 ```
 cargo test -p tick-core -p tick-merkle -p arena -p noref-rules
 cd contracts/noref && cargo near build non-reproducible-wasm --no-abi && cargo test --test flow
+cd ../fighter && cargo near build non-reproducible-wasm --no-abi && cargo test --test vault
 cd app && npm test
 ```
 
@@ -369,23 +433,28 @@ Real, and checkable on testnet.nearblocks.io:
   asked.
 - Player keys are made in the browser. The server relays signed transactions
   and cannot change them.
-- NPC bankrolls are the balances of their own accounts. Ladder matches,
-  sponsorships, cash-outs, dividends and rescues are real transactions.
+- NPC bankrolls are the balances of their own vault contracts, on accounts
+  with no full-access key. Shares, cash-outs, dividends and the stake limit
+  are vault rules; ladder matches,
+  backing, cash-outs, dividends and rescues are real transactions.
 - `spikes/wasm-determinism` checks that native and wasm32 builds of the rules
   stay bit-identical.
 
 Not claimed:
 
 - Testnet only. Test NEAR has no value. No mainnet deployment, no audit.
-- Shares in fighters: the transfers in, the dividends and the cash-outs are
-  real testnet transactions, but who holds how many shares is recorded by our
-  server, not by a contract.
+- The fighter vault is built with `cargo near build non-reproducible-wasm`;
+  its deployed code hash (`2DF3uwuH171DXsjSMsjkBzroWqeFvCorh9jmr8fwBfEq`, the
+  same on all six fighters) matches our build, but unlike the arena it is not
+  pinned to a reproducible build image. No audit.
 - Agent limits: only the budget is enforced by NEAR (the account balance).
   Max-stake, stop-loss and the match count are the bot's own code; the
   contract is locked and knows nothing about them.
-- The NPC fighters are bots run by our server, which holds their keys. The
-  contract guarantees that an NPC cannot win a match it lost; it does not make
-  the NPCs independent players.
+- The NPC fighters are bots run by our server. It holds a play-only key for
+  each: it decides how they play and can lose their money in matches (within
+  the vault's stake limit), but cannot withdraw it. The arena guarantees that
+  an NPC cannot win a match it lost; it does not make the NPCs independent
+  players.
 - Ratings, asking prices and ladder pairings are computed by our server
   (the inputs to a price are public; the computation is not on-chain). In a
   ladder match both NPCs are ours, so the result is claimed and confirmed
@@ -431,6 +500,7 @@ line.
 Built during the hackathon (the part to judge):
 
 - `contracts/noref` - stakes, claims, disputes settled by a full replay
+- `contracts/fighter` - each fighter's vault: shares, dividends, stake limit
 - `crates/rules` - match rules, input log, input chain, full-match replay
 - `crates/engine-wasm` - the same rules for the browser and the server
 - `app/` - server, NPC fighters, on-chain economy, testnet adapter, browser
@@ -447,6 +517,9 @@ reviewed by the team.
 ## Layout
 
 - `contracts/noref` - NEAR contract: stakes, claims, disputes by replay
+- `contracts/fighter` - the fighter vault (own Cargo workspace, size-optimised);
+  `app/scripts-vaults.mjs` moves a fighter onto it, `app/scripts-testnet-vault.mjs`
+  backs and cashes out on testnet
 - `crates/rules` - match rules, input log, input chain, full-match replay
 - `crates/engine-wasm` - the rules for JavaScript (browser + server)
 - `crates/tick-core` - no_std deterministic tick primitives

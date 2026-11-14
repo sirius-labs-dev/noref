@@ -893,6 +893,7 @@ function renderRoster() {
     li.innerHTML = `
       <div><span class="name">${n.name}</span>${n.status === "open" ? "" : '<span class="pill closed">closed</span>'}
         <div class="style">${n.style} · ${STYLE_INFO[n.style]}</div>
+        ${n.vault ? `<a class="vaultmark" href="${chainInfo.explorer}/address/${n.account}" target="_blank" rel="noopener" title="This fighter's money is held by its own contract: the server can only make it play, under stake limits; shares, cash-outs and dividends are contract rules.">◆ money held by its own contract ↗</a>` : ""}
         ${mine > 0 ? `<div class="mine">you own ${((100 * mine) / n.shares).toFixed(1)}% · worth ${fmt(Math.floor(mine * n.sharePrice))}</div>` : ""}
         <div class="meta">rating ${n.rating} · ${n.wins}W ${n.losses}L ${n.draws}D · bankroll ${testnet() && n.account ? `<a href="${chainInfo.explorer}/address/${n.account}" target="_blank" rel="noopener" title="its real NEAR account">${fmt(n.bankroll)} ↗</a>` : fmt(n.bankroll)}</div>
       </div>
@@ -910,7 +911,12 @@ function renderRoster() {
     li.querySelector('[data-act="back"]').addEventListener("click", async () => {
       try {
         let tx;
-        if (testnet()) {
+        if (testnet() && n.vault) {
+          // buy shares straight from the fighter's vault contract, signed here
+          const r = await pc.callAt(n.account, "back", {}, 30n, BigInt(Math.round(BACK() * 1000)) * 10n ** 21n);
+          tx = r.hash;
+          note("tx", `You backed ${n.name} through its vault: ${r.result} shares at the on-chain price`, tx);
+        } else if (testnet()) {
           // a real transfer into the NPC's own account, signed here
           const r = await pc.transfer(n.account, BigInt(Math.round(BACK() * 1000)) * 10n ** 21n);
           tx = r.hash;
@@ -924,6 +930,18 @@ function renderRoster() {
       }
     });
     li.querySelector('[data-act="cash"]')?.addEventListener("click", async () => {
+      if (testnet() && n.vault) {
+        try {
+          const t = await pc.callAt(n.account, "cash_out", { shares: String(mine) }, 30n);
+          note("tx", `${n.name}'s vault paid you for ${mine} shares`, t.hash);
+          await api("/api/cashout", { me, npc: n.id, shares: mine, tx: t.hash });
+          sfx.coins();
+          await refresh();
+        } catch (e) {
+          note("problem", e.message);
+        }
+        return;
+      }
       const r = await api("/api/cashout", { me, npc: n.id, shares: mine });
       if (r.tx) note("tx", `${n.name} paid you ${fmt(r.amount)} from ${n.account}`, r.tx);
       sfx.coins();

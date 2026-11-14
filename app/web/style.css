@@ -294,3 +294,5 @@ button.glow:hover:not(:disabled) { box-shadow: inset 0 0 0 1px rgba(255, 255, 25
 .board li { padding: 2px 0; overflow-wrap: anywhere; }
 .board li.me { color: #ffd2ad; }
 .board .g { color: var(--ok); }
+.npc .vaultmark { display: inline-block; margin-top: 3px; font: 11.5px var(--mono); color: #9cc3ff; text-decoration: none; }
+.npc .vaultmark:hover { text-decoration: underline; }

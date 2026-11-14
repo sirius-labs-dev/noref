@@ -122,6 +122,7 @@ export const action = {
   call: (method, args, gas = 30_000_000_000_000n, deposit = 0n) => ({ kind: 2, method, args, gas: BigInt(gas), deposit: BigInt(deposit) }),
   transfer: (deposit) => ({ kind: 3, deposit: BigInt(deposit) }),
   addFullKey: (publicKey) => ({ kind: 5, publicKey, perm: null }),
+  deleteKey: (publicKey) => ({ kind: 6, publicKey }),
   deleteAccount: (beneficiaryId) => ({ kind: 7, beneficiaryId }),
   addFnKey: (publicKey, receiverId, methods = [], allowance = null) => ({ kind: 5, publicKey, perm: { receiverId, methods, allowance } }),
 };
@@ -150,6 +151,7 @@ function encodeTx({ signerId, publicKey, nonce, receiverId, blockHash, actions }
       w.u128(a.deposit);
     } else if (a.kind === 3) w.u128(a.deposit);
     else if (a.kind === 7) w.str(a.beneficiaryId);
+    else if (a.kind === 6) writePublicKey(w, a.publicKey);
     else if (a.kind === 5) {
       writePublicKey(w, a.publicKey);
       w.u64(0); // access key nonce
