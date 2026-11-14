@@ -74,7 +74,12 @@ function search(engine, ball, score, { angles, powers, refine, against }) {
   return still <= best.s ? { ...best, pass: true } : best;
 }
 
-export function chooseFlick(engine, { ball, style, skill, rng, fast = false }) {
+/**
+ * `force`: never pass. A match where neither ball ever moves is a draw, and the
+ * deployed arena cannot pay out a draw (README, "Known issue: draws"); a side
+ * that always flicks at least once means no match it plays can end that way.
+ */
+export function chooseFlick(engine, { ball, style, skill, rng, fast = false, force = false }) {
   const opp = 1 - ball;
   const score = STYLES[style] ?? STYLES.sniper;
   engine.save();
@@ -90,7 +95,8 @@ export function chooseFlick(engine, { ball, style, skill, rng, fast = false }) {
     against: guess && { ball: guess.ball, dvx: guess.dvx, dvy: guess.dvy },
   });
   engine.restore();
-  if (best.pass) return { angle: 0, power: 0, dvx: 0n, dvy: 0n, pass: true };
+  if (best.pass && !force) return { angle: 0, power: 0, dvx: 0n, dvy: 0n, pass: true };
+  if (best.pass) return { angle: best.angle, power: 0.1, ...flickToImpulse(engine, best.angle, 0.1) };
   // skill 0..1: aim noise up to +-10 degrees and +-20% power at skill 0
   const angle = best.angle + (1 - skill) * 10 * (2 * rng() - 1);
   const power = Math.max(0.05, Math.min(1, best.power + (1 - skill) * 0.2 * (2 * rng() - 1)));

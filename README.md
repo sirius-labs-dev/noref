@@ -25,7 +25,7 @@ your network.
 > so the app runs without Rust.
 >
 > ```sh
-> cd app && npm run test:quick   # 12 tests, ~1 s: pricing, Gauntlet standings, bankroll limits, replay vector
+> cd app && npm run test:quick   # 15 tests, ~1 s: pricing, Gauntlet standings, bankroll limits, replay vector, no-play draws
 > cd app && npm run test:e2e     # 5 full local matches, ~2 min: honest, lying NPC, lying player, two people with and without a lie
 > cargo test -p tick-core -p tick-merkle -p arena -p noref-rules   # 30 Rust tests (first build takes a few minutes)
 > cd app && npm start            # http://localhost:8787, local chain mirror; then follow "Try it" below
@@ -445,9 +445,9 @@ cd app && CHAIN=testnet PORT=8789 DATA=./data/testnet node server/main.ts
 ```
 
 Tests (all pass from a clean copy: 30 Rust tests, 7 contract flow tests and 4
-fighter-vault tests in a NEAR sandbox, 17 app tests including five full local matches: honest, lying
+fighter-vault tests in a NEAR sandbox, 20 app tests including five full local matches: honest, lying
 NPC, lying player, and two people with and without a lie; `npm test` runs all
-17, `npm run test:quick` the 12 fast ones, `npm run test:e2e` the five matches):
+20, `npm run test:quick` the 15 fast ones, `npm run test:e2e` the five matches):
 
 ```
 cargo test -p tick-core -p tick-merkle -p arena -p noref-rules
@@ -542,7 +542,15 @@ Not claimed:
     replays the draw, the payout fails, and the claim stands.
   A draw needs both balls to stop exactly as far from the centre, which in
   practice means nobody flicked at all: in 300 simulated NPC matches there
-  was none. We found it on 14 Nov, after the arena and the vaults (which are
+  was none, and none of the 268 testnet matches so far was a draw. So our
+  sides never let that happen: the browser client (and the bot, which uses
+  the same `MatchClient`) makes a small flick in the last round if the player
+  has not flicked yet, and says so; NPCs and ladder matches flick at least
+  once per match (`chooseFlick`'s `force`; `app/test/nodraw.test.js`). One
+  moving ball breaks the starting symmetry, so a match with an honest side
+  cannot end in a draw, and a lie against an honest player is always
+  overturned. A drawn match now needs both sides to deliberately never flick
+  (a custom client on each side), and then only their own stakes are stuck. We found it on 14 Nov, after the arena and the vaults (which are
   bound to it) were locked, so the deployed contract cannot be changed. The
   source is fixed (the second refund runs after the first, `.then`) and two
   sandbox tests cover it (`draw_pays_both_back`,

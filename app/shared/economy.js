@@ -140,7 +140,7 @@ export function askStake(npc, now = Date.now(), opp = null) {
   // (the gas its own call prepays leaves the vault's balance during the call:
   // up to ~0.06 NEAR, so keep 8 milliNEAR of the limit spare, and round down)
   let floorIt = stake >= cap;
-  const vaultCap = npc.vaultMax != null ? Math.min(npc.vaultMax * 0.9, npc.vaultMax - 8) : Infinity;
+  const vaultCap = vaultRoom(npc);
   if (stake > vaultCap) {
     stake = vaultCap;
     floorIt = true;
@@ -151,8 +151,13 @@ export function askStake(npc, now = Date.now(), opp = null) {
   return { stake, why, declined };
 }
 
+/** What a vault fighter can stake right now, with room for its call's gas (see askStake). */
+export function vaultRoom(npc) {
+  return npc.vaultMax == null ? Infinity : Math.min(npc.vaultMax * 0.9, npc.vaultMax - 8);
+}
+
 export function isOpen(npc) {
-  return npc.status === "open" && npc.bankroll >= BROKE_BELOW;
+  return npc.status === "open" && npc.bankroll >= BROKE_BELOW && vaultRoom(npc) >= MIN_STAKE;
 }
 
 export function sharePrice(npc) {
@@ -168,7 +173,7 @@ export function sponsor(npc, who, amount, now = Date.now()) {
   npc.holders[who] = (npc.holders[who] ?? 0) + minted;
   npc.history.push({ t: now, bankroll: npc.bankroll, rating: Math.round(npc.rating) });
   const events = [`${who} backed ${npc.name} with ${fmt(amount)} (${minted.toFixed(3)} shares)`];
-  if (npc.status === "retired" && npc.bankroll >= REOPEN_AT) {
+  if (npc.status === "retired" && npc.bankroll >= REOPEN_AT && vaultRoom(npc) >= MIN_STAKE) {
     npc.status = "open";
     delete npc.closedAt;
     events.push(`${npc.name} reopened: sponsors brought the bankroll to ${fmt(npc.bankroll)}`);
@@ -192,7 +197,7 @@ export function cashOut(npc, who, shares, now = Date.now()) {
 }
 
 function checkBankrupt(npc) {
-  if (npc.status === "open" && npc.bankroll < BROKE_BELOW) {
+  if (npc.status === "open" && (npc.bankroll < BROKE_BELOW || vaultRoom(npc) < MIN_STAKE)) { // a vault that cannot stake the minimum is broke too
     npc.status = "retired";
     npc.closedAt = Date.now();
     return [`${npc.name} went broke (${fmt(npc.bankroll)}) and closed its doors until someone invests`];
@@ -222,12 +227,12 @@ export function recordResult(npc, { delta, score, oppRating, now = Date.now(), u
 
 /** Open/close an NPC after its bankroll changed outside a match (e.g. synced from chain). */
 export function updateStatus(npc, now = Date.now()) {
-  if (npc.status === "open" && npc.bankroll < BROKE_BELOW) {
+  if (npc.status === "open" && (npc.bankroll < BROKE_BELOW || vaultRoom(npc) < MIN_STAKE)) { // a vault that cannot stake the minimum is broke too
     npc.status = "retired";
     npc.closedAt = now;
     return [`${npc.name} went broke (${fmt(npc.bankroll)}) and closed its doors until someone invests`];
   }
-  if (npc.status === "retired" && npc.bankroll >= REOPEN_AT) {
+  if (npc.status === "retired" && npc.bankroll >= REOPEN_AT && vaultRoom(npc) >= MIN_STAKE) {
     npc.status = "open";
     delete npc.closedAt;
     return [`${npc.name} reopened with a bankroll of ${fmt(npc.bankroll)}`];

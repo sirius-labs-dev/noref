@@ -90,9 +90,16 @@ export class MatchClient {
     this.round = d.round;
     this.roundStart = this.table;
     this.engine.setState(this.table);
-    const choice = await this.aim(this.engine, { round: d.round, deadline: d.deadline, rounds: this.info.rounds });
+    let choice = await this.aim(this.engine, { round: d.round, deadline: d.deadline, rounds: this.info.rounds });
     this.engine.setState(this.table);
+    // never let a whole match pass without a flick from us: a match where no
+    // ball moves is a draw, which the deployed arena cannot pay out
+    if (!(choice && choice.power > 0) && !this.flicked && d.round === this.info.rounds - 1) {
+      choice = { angle: 0, power: 0.1 };
+      this.log("note", "Last round and no flick yet: a small flick is made for you, so the match cannot end as a no-play draw.");
+    }
     const imp = choice && choice.power > 0 ? flickToImpulse(this.engine, choice.angle, choice.power) : { dvx: 0n, dvy: 0n };
+    if (imp.dvx !== 0n || imp.dvy !== 0n) this.flicked = true;
     const entry = { ball: this.side, dvx: imp.dvx, dvy: imp.dvy };
     const salt = globalThis.crypto.getRandomValues(new Uint8Array(16));
     const hash = await commitHash(this.id, d.round, entry, salt);

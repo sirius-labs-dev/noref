@@ -202,11 +202,16 @@ function simulateNpcMatch(a: any, b: any, rng: () => number, now: number, book =
   engine.reset();
   const R = engine.ROUND_TICKS;
   const records: any[] = [];
-  for (let round = 0; round < engine.MATCH_TICKS / R; round++) {
+  const rounds = engine.MATCH_TICKS / R;
+  let movedA = false, movedB = false; // each NPC flicks at least once (chooseFlick's `force`)
+  for (let round = 0; round < rounds; round++) {
     const table = engine.getState();
-    const fa = chooseFlick(engine, { ball: 0, style: a.style, skill: a.skill, rng, fast: true });
+    const last = round === rounds - 1;
+    const fa = chooseFlick(engine, { ball: 0, style: a.style, skill: a.skill, rng, fast: true, force: last && !movedA });
     engine.setState(table);
-    const fb = chooseFlick(engine, { ball: 1, style: b.style, skill: b.skill, rng, fast: true });
+    const fb = chooseFlick(engine, { ball: 1, style: b.style, skill: b.skill, rng, fast: true, force: last && !movedB });
+    movedA ||= !fa.pass;
+    movedB ||= !fb.pass;
     engine.setState(table);
     const entries = [];
     if (!fa.pass) entries.push({ ball: 0, dvx: fa.dvx, dvy: fa.dvy });
@@ -362,7 +367,7 @@ async function ladderOnchain() {
     await syncNpcs();
     ladderPair = "";
     // a vault that cannot stake the minimum is closed by its contract
-    const open = world.roster.filter((n) => eco.isOpen(n) && !(n.vault && Math.min(n.vaultMax * 0.9, n.vaultMax - 8) < eco.MIN_STAKE));
+    const open = world.roster.filter((n) => eco.isOpen(n)); // isOpen also checks a vault's room to stake
     if (open.length < 2) return;
     const i = Math.floor(ladderRng() * open.length);
     let j = Math.floor(ladderRng() * (open.length - 1));
@@ -563,6 +568,7 @@ async function api(req: any, url: URL): Promise<unknown> {
     const opp = await form(me);
     // a vault checks the stake against its bankroll right now: quote from it
     if (TESTNET && npc.vault) await syncVault(npc);
+    need(eco.isOpen(npc), `${npc.name}'s vault cannot cover the minimum stake right now`);
     const quote = eco.askStake(npc, nowW(), opp);
     need(!quote.declined, `${npc.name} won't play you: ${quote.why[quote.why.length - 1]}`);
     const { stake } = quote;

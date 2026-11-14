@@ -57,6 +57,7 @@ export class LiveMatch {
   commits: (string | null)[] = [null, null];
   reveals: (Entry | null)[] = [null, null];
   npcSecret: { entry: Entry | null; salt: Uint8Array } | null = null;
+  npcFlicked = false;
   humanSig: { tick: number; sig: string } | null = null;
   npcSig: { tick: number; sig: string } | null = null;
   timer: ReturnType<typeof setTimeout> | null = null;
@@ -96,8 +97,11 @@ export class LiveMatch {
     this.reveals = [null, null];
     // NPC thinks on the table as it stands, blind to the human's flick
     this.engine.setState(this.table);
-    const f = chooseFlick(this.engine, { ball: 1, style: this.npc.style, skill: this.npc.skill, rng: this.rng });
+    // the NPC flicks at least once per match (see chooseFlick's `force`)
+    const force = !this.npcFlicked && this.round === this.rounds - 1;
+    const f = chooseFlick(this.engine, { ball: 1, style: this.npc.style, skill: this.npc.skill, rng: this.rng, force });
     const entry = f.pass ? null : { ball: 1, dvx: f.dvx, dvy: f.dvy };
+    if (entry) this.npcFlicked = true;
     const salt = new Uint8Array(randomBytes(16));
     this.npcSecret = { entry, salt };
     this.commits[1] = await commitHash(this.id, this.round, entry ?? { ball: 1, dvx: 0n, dvy: 0n }, salt);
