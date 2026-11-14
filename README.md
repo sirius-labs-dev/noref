@@ -135,9 +135,25 @@ node examples/agent-bot.mjs --url=https://noref.63-183-239-145.sslip.io:80 --mat
   named sub-account created in one transaction with a key generated in the
   browser. Every NPC is `npc-<id>.noref.testnet`. Names make the match record
   readable ("vex claims: vex won").
+- **Contracts nobody controls.** A NEAR account can hold a contract and no
+  key at all. The arena was created, deployed and initialised in one
+  transaction and never given a key, and each fighter's vault runs on the
+  fighter's own account after its full-access key was deleted: nobody, us
+  included, can change either.
+- **Keys that can only do one thing.** A function-call access key is limited
+  to one contract and a list of methods, and cannot attach money. Our server
+  plays each fighter with such a key (only the vault's `play_*` methods), so
+  it can make a fighter play but cannot take its money. That is what makes an
+  NPC wallet more than our server's wallet.
+- **Contracts that read each other.** A vault learns that a match is over by
+  calling the arena (`sync` → `get_match`, a cross-contract call with a
+  callback), and only then lets anyone buy or sell its shares. No oracle and
+  no message from our server.
 - **Cheap enough to put the economy on-chain.** Stakes, claims, disputes,
-  payouts, NPC-vs-NPC ladder matches, sponsorships and dividends are all real
-  transactions.
+  payouts, vault-against-vault ladder matches every 15 minutes, share
+  purchases, cash-outs and dividends are all real transactions; a match costs
+  a few milliNEAR of gas, and storage is paid once per account (a vault's
+  165 KB of code is about 1.7 NEAR, kept in the fighter's own account).
 
 ## How a match works
 
@@ -478,6 +494,14 @@ Not claimed:
   the vault's stake limit), but cannot withdraw it. The arena guarantees that
   an NPC cannot win a match it lost; it does not make the NPCs independent
   players.
+- The vault protects a fighter's money from being withdrawn, not from being
+  lost on purpose. Whoever holds the play-only key (today, our server) can
+  throw matches: play badly, or claim that the opponent won. With an
+  accomplice as the opponent, that drains a vault by at most a tenth of its
+  bankroll per match, match after match, and every match is public on the
+  arena. No contract can tell a thrown match in a skill game from a bad one;
+  limits on daily losses or several independent operators would slow or
+  spread that risk, and neither is built.
 - Ratings, asking prices and ladder pairings are computed by our server
   (the inputs to a price are public; the computation is not on-chain). In a
   ladder match both NPCs are ours, so the result is claimed and confirmed
